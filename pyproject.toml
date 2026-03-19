@@ -10,4 +10,4 @@ dependencies = [
 ]
 
 [project.scripts]
-png2icons = "luban_workshop.tools.png2Icons.main:main"
+png2icons = "tools.png2Icons.main:main"

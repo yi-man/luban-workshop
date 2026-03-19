@@ -7,7 +7,7 @@ from PIL import Image
 
 # 添加项目根目录到路径，以便导入模块
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from luban_workshop.tools.png2Icons.main import generate_ico, check_macos_tools
+from tools.png2Icons.main import generate_ico, check_macos_tools
 
 class TestPNG2Icons(unittest.TestCase):
     def setUp(self):
@@ -41,7 +41,7 @@ class TestPNG2Icons(unittest.TestCase):
     
     def test_check_macos_tools(self):
         """测试检查 macOS 工具的功能"""
-        from luban_workshop.tools.png2Icons.main import check_macos_tools
+        from tools.png2Icons.main import check_macos_tools
         # 这个测试只在 macOS 上有意义
         if sys.platform == 'darwin':
             result = check_macos_tools()

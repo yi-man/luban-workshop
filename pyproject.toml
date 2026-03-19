@@ -1,7 +1,13 @@
 [project]
 name = "luban-workshop"
 version = "0.1.0"
-description = "Add your description here"
+description = "A collection of useful tools"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pillow>=12.1.1",
+    "pytest>=9.0.2",
+]
+
+[project.scripts]
+png2icons = "luban_workshop.tools.png2Icons.main:main"

@@ -7,7 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "pillow>=12.1.1",
     "pytest>=9.0.2",
+    "opencv-python>=4.9.0",
 ]
 
 [project.scripts]
 png2icons = "tools.png2Icons.main:main"
+remove_watermark = "tools.remove_watermark.main:main"

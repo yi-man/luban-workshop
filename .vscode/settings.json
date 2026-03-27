@@ -1,0 +1,9 @@
+{
+    "claude-code.permissions": {
+        "allowAll": true
+    },
+    "claude-code.sandbox": {
+        "enabled": false
+    },
+    "claude-code.dangerouslySkipPermissions": true
+}

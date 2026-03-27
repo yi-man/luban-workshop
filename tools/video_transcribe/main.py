@@ -235,21 +235,51 @@ def save_result(original_text, translated_text, video_path):
 
 
 def transcribe(input_arg):
-    """主流程：接受本地视频路径或 URL（仅尝试拉取字幕）。"""
+    """主流程：接受本地视频路径或 URL。如果是 URL 且无法拉取字幕，自动下载视频后转写。"""
     input_arg = input_arg.strip()
     is_url = input_arg.startswith('http://') or input_arg.startswith('https://')
     video_path = None
     text = None
 
     if is_url:
-        # 仅尝试拉取字幕，不下载视频
+        # 尝试拉取字幕
         print(f"[1/4] 尝试从链接拉取字幕: {input_arg[:60]}...")
         print("[2/4] 提取文字")
         text = download_subtitles(input_arg)
         if not text:
-            print("该链接无法直接拉取字幕。请先使用 video-download 工具下载视频，再传入本地路径：")
-            print("  uv run video-transcribe <本地视频路径>")
-            return
+            # 无法拉取字幕，自动下载视频
+            print("  无法直接拉取字幕，正在自动下载视频...")
+            from tools.video_download.main import detect_platform, download_douyin, download_xiaohongshu, download_bilibili, download_ytdlp
+
+            platform, url = detect_platform(input_arg)
+            if platform == 'douyin':
+                download_douyin(url)
+            elif platform == 'xiaohongshu':
+                download_xiaohongshu(url)
+            elif platform == 'bilibili':
+                download_bilibili(url)
+            else:
+                download_ytdlp(url)
+
+            # 查找下载的文件（默认保存在 ~/Downloads/）
+            download_dir = os.path.expanduser('~/Downloads')
+            # 获取最新下载的文件
+            files = sorted(os.listdir(download_dir), key=lambda x: os.path.getmtime(os.path.join(download_dir, x)), reverse=True)
+            for file in files:
+                if file.endswith('.mp4') or file.endswith('.webm') or file.endswith('.avi') or file.endswith('.mov'):
+                    video_path = os.path.join(download_dir, file)
+                    print(f"  视频下载成功: {video_path}")
+                    break
+
+            if video_path:
+                print("  开始转写下载的视频...")
+                text = get_subtitles_with_ytdlp(video_path)
+                if not text:
+                    print("  字幕不可用，改用 Whisper 识别")
+                    text = transcribe_with_whisper(video_path)
+            else:
+                print("错误: 视频下载失败，请检查网络连接")
+                return
     else:
         # 本地路径：先展开 ~
         video_path = os.path.expanduser(input_arg)

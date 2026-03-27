@@ -10,6 +10,20 @@ dependencies = [
     "opencv-python>=4.9.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["tools", "tools.*"]
+
+[project.optional-dependencies]
+video = [
+    "playwright>=1.40.0",
+]
+video-transcribe = [
+    "faster-whisper>=1.0.0",
+    "googletrans>=3.1.0a0",
+]
+
 [project.scripts]
 png2icons = "tools.png2Icons.main:main"
 remove_watermark = "tools.remove_watermark.main:main"
+video_download = "tools.video_download.main:main"
+video_transcribe = "tools.video_transcribe.main:main"

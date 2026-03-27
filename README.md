@@ -8,11 +8,9 @@ A collection of useful executable tools for various tasks.
 luban-workshop/
 ├── tools/                    # Executable tools directory
 │   ├── png2Icons/            # PNG to ICO/ICNS converter
-│   │   ├── __init__.py
-│   │   └── main.py
-│   └── example_tool.py       # Example tool
-├── luban_workshop/           # Minimal package namespace
-│   └── __init__.py
+│   ├── remove_watermark/     # Watermark removal tool
+│   ├── video_download/        # Multi-platform video downloader
+│   └── video_transcribe/     # Video to text transcription
 ├── tests/                    # Unit tests
 ├── AGENTS.md                 # Agent/tool instructions (source)
 ├── CLAUDE.md -> AGENTS.md    # Symlink for Claude/Cursor compatibility
@@ -45,6 +43,87 @@ uv run png2icons <input.png>
 - Pillow library
 - macOS tools: sips, iconutil (for ICNS generation on macOS)
 
+### video_download
+
+Multi-platform video download tool supporting major platforms.
+
+**Usage:**
+
+```bash
+uv run video_download "<视频链接>" [输出文件名]
+```
+
+**Supported Platforms:**
+
+| 平台 | 下载方式 |
+|-----|---------|
+| 抖音 | Playwright (无头浏览器) |
+| 小红书 | Playwright (无头浏览器) |
+| B站 | yt-dlp |
+| YouTube / Twitter / Instagram | yt-dlp |
+| 其他 1700+ 站点 | yt-dlp |
+
+**Login (optional, for better quality):**
+
+```bash
+uv run video_download login bilibili
+uv run video_download login douyin
+uv run video_download login xiaohongshu
+```
+
+**Features:**
+
+- Supports short links and full links
+- Auto-detects platform
+- Optional login for better quality
+- Saves to ~/Downloads/ directory
+
+**Detailed documentation:** See [tools/video_download/README.md](tools/video_download/README.md)
+
+### video_transcribe
+
+Video to text transcription tool with subtitle extraction and speech recognition.
+
+**Usage:**
+
+```bash
+# First download the video using video_download
+uv run video_transcribe "<本地视频路径>"
+```
+
+**Features:**
+
+- Extract embedded subtitles using yt-dlp
+- Speech recognition using Whisper (fallback)
+- Auto language detection
+- English to Chinese translation (auto-detected)
+- Saves as Markdown with original and translated text
+
+**Workflow:**
+
+1. Use `video_download` to download the video
+2. Use `video_transcribe` on the local file
+
+**Supported formats:** MP4, WebM, AVI, MOV, MKV, etc.
+
+**Detailed documentation:** See [tools/video_transcribe/README.md](tools/video_transcribe/README.md)
+
+### remove_watermark
+
+Watermark removal tool using OpenCV inpainting.
+
+**Usage:**
+
+```bash
+uv run remove_watermark <input_image>
+```
+
+**Features:**
+
+- Auto-detects and removes watermark from bottom-right corner
+- Preserves background using inpainting
+- Generates output image with `_no_watermark` suffix
+
 ## Developer Workflow
 
 Install dependencies:
@@ -62,6 +141,9 @@ uv run python -m pytest tests/ -v
 Tool entrypoint mapping:
 
 - `png2icons` -> `tools.png2Icons.main:main`
+- `video_download` -> `tools.video_download.main:main`
+- `video_transcribe` -> `tools.video_transcribe.main:main`
+- `remove_watermark` -> `tools.remove_watermark.main:main`
 
 ## Installation
 

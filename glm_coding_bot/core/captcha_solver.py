@@ -344,7 +344,7 @@ class CaptchaSolver:
                     if slider:
                         logger.debug(f"找到滑块按钮: {selector}")
                         break
-                except:
+                except Exception:
                     continue
 
             if not slider:
@@ -378,7 +378,7 @@ class CaptchaSolver:
                         if track_bbox:
                             track_width = track_bbox["width"] - bbox["width"]
                             break
-                except:
+                except Exception:
                     continue
 
             # 限制目标位置在有效范围内
@@ -453,7 +453,7 @@ class CaptchaSolver:
                     is_visible = await element.is_visible()
                     if is_visible:
                         return True
-            except:
+            except Exception:
                 continue
 
         return False
@@ -478,7 +478,7 @@ class CaptchaSolver:
             try:
                 input()
                 result["confirmed"] = True
-            except:
+            except (EOFError, KeyboardInterrupt):
                 pass
 
         thread = threading.Thread(target=wait_for_input)

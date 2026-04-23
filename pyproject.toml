@@ -28,7 +28,7 @@ video-transcribe = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["tools", "tools.*", "glm_coding_bot", "glm_coding_bot.*"]
+include = ["tools", "tools.*"]
 
 [dependency-groups]
 dev = [
@@ -40,4 +40,4 @@ png2icons = "tools.png2Icons.main:main"
 remove_watermark = "tools.remove_watermark.main:main"
 video_download = "tools.video_download.main:main"
 video_transcribe = "tools.video_transcribe.main:main"
-glm-coding-bot = "glm_coding_bot.cli:cli"
+glm-coding-bot = "tools.glm_coding_bot.cli:cli"

@@ -11,9 +11,9 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from glm_coding_bot.core.stock_monitor import StockMonitor
-from glm_coding_bot.core.browser_controller import BrowserController
-from glm_coding_bot.product_mapping import SubscriptionPeriod, get_product_id
+from tools.glm_coding_bot.core.stock_monitor import StockMonitor
+from tools.glm_coding_bot.core.browser_controller import BrowserController
+from tools.glm_coding_bot.product_mapping import SubscriptionPeriod, get_product_id
 
 
 async def basic_stock_monitoring_example():

@@ -9,7 +9,7 @@
 
 import sys
 
-from glm_coding_bot.cli import cli
+from tools.glm_coding_bot.cli import cli
 
 if __name__ == "__main__":
     cli()

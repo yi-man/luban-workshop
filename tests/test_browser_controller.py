@@ -10,7 +10,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from glm_coding_bot.core.browser_controller import BrowserController
+from tools.glm_coding_bot.core.browser_controller import BrowserController
 
 
 class TestBrowserController:
@@ -36,7 +36,7 @@ class TestBrowserController:
     async def test_init_success(self, controller):
         mock_pw, mock_browser, mock_context, mock_page = self._make_mock_playwright()
 
-        with patch("glm_coding_bot.core.browser_controller.async_playwright") as mock_async_pw:
+        with patch("tools.glm_coding_bot.core.browser_controller.async_playwright") as mock_async_pw:
             mock_async_pw.return_value.start = AsyncMock(return_value=mock_pw)
 
             success = await controller.init()
@@ -48,7 +48,7 @@ class TestBrowserController:
 
     @pytest.mark.asyncio
     async def test_init_failure(self, controller):
-        with patch("glm_coding_bot.core.browser_controller.async_playwright") as mock_async_pw:
+        with patch("tools.glm_coding_bot.core.browser_controller.async_playwright") as mock_async_pw:
             mock_async_pw.return_value.start = AsyncMock(side_effect=Exception("Launch failed"))
 
             success = await controller.init()

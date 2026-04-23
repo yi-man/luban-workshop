@@ -11,8 +11,8 @@ from typing import Callable, Dict, Optional
 import aiohttp
 from rich.console import Console
 
-from glm_coding_bot.config import get_config
-from glm_coding_bot.utils.logger import get_logger
+from tools.glm_coding_bot.config import get_config
+from tools.glm_coding_bot.utils.logger import get_logger
 
 console = Console()
 logger = get_logger()

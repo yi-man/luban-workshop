@@ -13,9 +13,9 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from rich.console import Console
 from rich.panel import Panel
 
-from glm_coding_bot.config import get_config
-from glm_coding_bot.core.captcha_solver import CaptchaSolver
-from glm_coding_bot.utils.logger import get_logger
+from tools.glm_coding_bot.config import get_config
+from tools.glm_coding_bot.core.captcha_solver import CaptchaSolver
+from tools.glm_coding_bot.utils.logger import get_logger
 
 console = Console()
 logger = get_logger()

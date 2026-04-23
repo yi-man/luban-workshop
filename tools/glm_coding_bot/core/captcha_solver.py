@@ -18,7 +18,7 @@ from typing import Optional, Tuple, List
 
 import numpy as np
 
-from glm_coding_bot.utils.logger import get_logger
+from tools.glm_coding_bot.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

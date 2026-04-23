@@ -22,15 +22,15 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.status import Status
 
-from glm_coding_bot.config import get_config
-from glm_coding_bot.core.browser_controller import BrowserController
-from glm_coding_bot.core.stock_monitor import StockMonitor
-from glm_coding_bot.product_mapping import (
+from tools.glm_coding_bot.config import get_config
+from tools.glm_coding_bot.core.browser_controller import BrowserController
+from tools.glm_coding_bot.core.stock_monitor import StockMonitor
+from tools.glm_coding_bot.product_mapping import (
     SubscriptionPeriod,
     get_product_id,
 )
-from glm_coding_bot.utils.logger import get_logger
-from glm_coding_bot.utils.time_sync import sync_time
+from tools.glm_coding_bot.utils.logger import get_logger
+from tools.glm_coding_bot.utils.time_sync import sync_time
 
 console = Console()
 logger = get_logger()

@@ -10,7 +10,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from glm_coding_bot.core.captcha_solver import CaptchaSolver
+from tools.glm_coding_bot.core.captcha_solver import CaptchaSolver
 
 
 class TestCaptchaSolver:

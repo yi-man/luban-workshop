@@ -9,7 +9,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from glm_coding_bot.core.stock_monitor import StockMonitor
+from tools.glm_coding_bot.core.stock_monitor import StockMonitor
 
 
 def _make_mock_response(status=200, json_data=None):

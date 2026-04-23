@@ -19,10 +19,10 @@ from typing import Callable, Dict, Any, Optional
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from glm_coding_bot.core.stock_monitor import StockMonitor
-from glm_coding_bot.core.browser_controller import BrowserController
-from glm_coding_bot.core.captcha_solver import CaptchaSolver
-from glm_coding_bot.product_mapping import SubscriptionPeriod, get_product_id
+from tools.glm_coding_bot.core.stock_monitor import StockMonitor
+from tools.glm_coding_bot.core.browser_controller import BrowserController
+from tools.glm_coding_bot.core.captcha_solver import CaptchaSolver
+from tools.glm_coding_bot.product_mapping import SubscriptionPeriod, get_product_id
 
 
 @dataclass
@@ -327,7 +327,7 @@ async def main():
     print("要运行完整流程，需要:")
     print("1. 安装 Chrome/Chromium 浏览器")
     print("2. 运行 playwright install chromium")
-    print("3. 先执行登录: python -m glm_coding_bot login --phone <手机号>")
+    print("3. 先执行登录: python -m tools.glm_coding_bot login --phone <手机号>")
     print("=" * 60 + "\n")
 
     # 实际运行时取消下面的注释：

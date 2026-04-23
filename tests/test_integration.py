@@ -10,8 +10,8 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from glm_coding_bot.core.stock_monitor import StockMonitor, StockInfo
-from glm_coding_bot.product_mapping import SubscriptionPeriod, get_product_id
+from tools.glm_coding_bot.core.stock_monitor import StockMonitor, StockInfo
+from tools.glm_coding_bot.product_mapping import SubscriptionPeriod, get_product_id
 
 
 class TestIntegration:

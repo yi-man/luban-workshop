@@ -6,7 +6,7 @@ import struct
 import time
 from dataclasses import dataclass
 
-from glm_coding_bot.utils.logger import get_logger
+from tools.glm_coding_bot.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

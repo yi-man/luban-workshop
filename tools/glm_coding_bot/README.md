@@ -17,15 +17,10 @@
 ```bash
 # 克隆项目
 git clone <repo-url>
-cd glm-coding-bot
-
-# 创建虚拟环境（推荐）
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# 或 .venv\Scripts\activate  # Windows
+cd luban-workshop
 
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 
 # 安装 playwright 浏览器
 playwright install chromium
@@ -34,7 +29,7 @@ playwright install chromium
 ### 2. 登录账号
 
 ```bash
-python -m glm_coding_bot login --phone 13800138000
+glm-coding-bot login --phone 13800138000
 ```
 
 按提示输入短信验证码，登录成功后会保存 cookies 到 `cookies.json`。
@@ -42,17 +37,17 @@ python -m glm_coding_bot login --phone 13800138000
 ### 3. 检查登录状态
 
 ```bash
-python -m glm_coding_bot check-login
+glm-coding-bot check-login
 ```
 
 ### 4. 执行抢购
 
 ```bash
 # 默认抢购 Max 套餐，连续包季，10:00:00 开始
-python -m glm_coding_bot buy
+glm-coding-bot buy
 
 # 指定参数
-python -m glm_coding_bot buy \
+glm-coding-bot buy \
   --package Max \
   --period quarterly \
   --time 10:00:00 \

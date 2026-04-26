@@ -268,15 +268,66 @@ class BrowserController:
         if not keywords:
             return False
 
+        selected_state_script = """
+        (el) => {
+            const selectedTokens = new Set([
+                "active",
+                "selected",
+                "current",
+                "checked",
+                "is-active",
+                "is-selected",
+                "ant-tabs-tab-active",
+            ]);
+            const nodes = [
+                el,
+                el.closest('[role="tab"]'),
+                el.closest('button'),
+                el.closest('[aria-selected]'),
+                el.closest('[data-state]'),
+                el.parentElement,
+                el.parentElement?.parentElement,
+            ].filter(Boolean);
+
+            return nodes.some((node) => {
+                const attrs = [
+                    node.getAttribute("aria-selected"),
+                    node.getAttribute("aria-pressed"),
+                    node.getAttribute("aria-current"),
+                    node.getAttribute("data-state"),
+                    node.getAttribute("data-selected"),
+                    node.getAttribute("data-active"),
+                ];
+                if (attrs.includes("true")) {
+                    return true;
+                }
+                if (attrs.includes("active") || attrs.includes("selected") || attrs.includes("current")) {
+                    return true;
+                }
+
+                const className = typeof node.className === "string" ? node.className : "";
+                return className
+                    .toLowerCase()
+                    .split(/\\s+/)
+                    .some((token) => selectedTokens.has(token));
+            });
+        }
+        """
+
         for keyword in keywords:
             locator = self._page.locator(f"text={keyword}")
-            if not await locator.count():
+            count = await locator.count()
+            if not count:
                 continue
-            try:
-                if await locator.first.is_visible():
-                    return True
-            except Exception:
-                continue
+            for index in range(count):
+                candidate = locator.first if index == 0 else locator.nth(index)
+                try:
+                    if not await candidate.is_visible():
+                        continue
+                    if await candidate.evaluate(selected_state_script):
+                        return True
+                except Exception:
+                    continue
         return False
 
     async def _is_button_in_viewport(self, button) -> bool:
@@ -303,8 +354,14 @@ class BrowserController:
     async def _has_blocking_overlay(self) -> bool:
         if not self._page:
             return False
-        overlay = await self._page.query_selector(".captcha-component, .tencent-captcha-dy, .ant-modal-mask")
-        return overlay is not None
+        overlays = await self._page.query_selector_all(".captcha-component, .tencent-captcha-dy, .ant-modal-mask")
+        for overlay in overlays:
+            try:
+                if await overlay.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
 
     async def handle_captcha(self, timeout: float = 15.0) -> bool:
         """处理滑块验证码

@@ -3,7 +3,7 @@
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -156,6 +156,88 @@ async def test_get_page_state_reports_hot_ready_when_button_clickable(controller
 
     assert state.warm_ready is True
     assert state.hot_ready is True
+
+
+@pytest.mark.asyncio
+async def test_is_period_tab_ready_requires_selected_state(controller):
+    controller._page = Mock()
+    mock_locator = AsyncMock()
+    mock_tab = AsyncMock()
+    mock_locator.count = AsyncMock(return_value=1)
+    mock_locator.first = mock_tab
+    mock_tab.is_visible = AsyncMock(return_value=True)
+    mock_tab.evaluate = AsyncMock(return_value=False)
+    controller._page.locator = Mock(return_value=mock_locator)
+
+    ready = await controller._is_period_tab_ready("quarterly")
+
+    assert ready is False
+
+
+@pytest.mark.asyncio
+async def test_get_page_state_ignores_hidden_overlay_nodes(controller):
+    mock_page = AsyncMock()
+    mock_page.url = f"{controller.base_url}/glm-coding"
+    mock_page.viewport_size = {"width": controller.width, "height": controller.height}
+    controller._page = mock_page
+    controller._initialized = True
+    controller._is_period_tab_ready = AsyncMock(return_value=True)
+    controller._has_login_prompt = AsyncMock(return_value=False)
+
+    mock_button = AsyncMock()
+    mock_button.is_visible = AsyncMock(return_value=True)
+    mock_button.is_enabled = AsyncMock(return_value=True)
+    mock_button.bounding_box = AsyncMock(return_value={"x": 100, "y": 250, "width": 180, "height": 48})
+
+    hidden_overlay = AsyncMock()
+    hidden_overlay.is_visible = AsyncMock(return_value=False)
+
+    async def query_selector_all(selector):
+        if selector == ".buy-btn":
+            return [mock_button, mock_button, mock_button]
+        if selector == ".captcha-component, .tencent-captcha-dy, .ant-modal-mask":
+            return [hidden_overlay]
+        return []
+
+    mock_page.query_selector_all = AsyncMock(side_effect=query_selector_all)
+
+    state = await controller.refresh_page_state("Max", "quarterly")
+
+    assert state.captcha_blocking is False
+    assert state.hot_ready is True
+
+
+@pytest.mark.asyncio
+async def test_get_page_state_visible_overlay_blocks_hot_ready(controller):
+    mock_page = AsyncMock()
+    mock_page.url = f"{controller.base_url}/glm-coding"
+    mock_page.viewport_size = {"width": controller.width, "height": controller.height}
+    controller._page = mock_page
+    controller._initialized = True
+    controller._is_period_tab_ready = AsyncMock(return_value=True)
+    controller._has_login_prompt = AsyncMock(return_value=False)
+
+    mock_button = AsyncMock()
+    mock_button.is_visible = AsyncMock(return_value=True)
+    mock_button.is_enabled = AsyncMock(return_value=True)
+    mock_button.bounding_box = AsyncMock(return_value={"x": 100, "y": 250, "width": 180, "height": 48})
+
+    visible_overlay = AsyncMock()
+    visible_overlay.is_visible = AsyncMock(return_value=True)
+
+    async def query_selector_all(selector):
+        if selector == ".buy-btn":
+            return [mock_button, mock_button, mock_button]
+        if selector == ".captcha-component, .tencent-captcha-dy, .ant-modal-mask":
+            return [visible_overlay]
+        return []
+
+    mock_page.query_selector_all = AsyncMock(side_effect=query_selector_all)
+
+    state = await controller.refresh_page_state("Max", "quarterly")
+
+    assert state.captcha_blocking is True
+    assert state.hot_ready is False
 
 
 @pytest.mark.asyncio

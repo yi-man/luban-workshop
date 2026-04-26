@@ -5,6 +5,7 @@
 
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import Optional
 
 from playwright.async_api import async_playwright, BrowserContext, Page
@@ -17,6 +18,21 @@ from tools.glm_coding_bot.utils.logger import get_logger
 
 console = Console()
 logger = get_logger()
+
+
+@dataclass
+class PageState:
+    session_ok: bool = False
+    route_ok: bool = False
+    period_ok: bool = False
+    button_present: bool = False
+    button_clickable: bool = False
+    viewport_ok: bool = False
+    captcha_blocking: bool = False
+    warm_ready: bool = False
+    hot_ready: bool = False
+    last_checked_at: float = 0.0
+    last_failure_reason: str | None = None
 
 
 class BrowserController:
@@ -159,11 +175,11 @@ class BrowserController:
             if not period_selected:
                 console.print("[yellow]未找到周期标签，继续尝试直接点击购买按钮[/yellow]")
 
-            buttons = await self._page.query_selector_all(".buy-btn")
-            if len(buttons) > index:
-                await buttons[index].scroll_into_view_if_needed()
+            button = await self._resolve_buy_button(package)
+            if button is not None:
+                await button.scroll_into_view_if_needed()
                 await asyncio.sleep(0.1)
-                await buttons[index].click()
+                await button.click()
                 self.stats["click_count"] += 1
                 console.print("[green]购买按钮已点击[/green]")
                 return True
@@ -176,6 +192,74 @@ class BrowserController:
             console.print(f"[red]点击按钮失败: {e}[/red]")
             self.stats["error_count"] += 1
             return False
+
+    async def refresh_page_state(self, package: str, period: str) -> PageState:
+        state = PageState(last_checked_at=time.time())
+        if not self._page:
+            state.last_failure_reason = "page-missing"
+            return state
+
+        page_url = getattr(self._page, "url", "") or ""
+
+        state.session_ok = not await self._has_login_prompt()
+        state.route_ok = self.base_url in page_url
+        state.period_ok = await self._select_period_tab(period)
+        button = await self._resolve_buy_button(package)
+        state.button_present = button is not None
+        if button is not None:
+            state.button_clickable = await button.is_visible() and await button.is_enabled()
+            state.viewport_ok = state.button_clickable
+        state.captcha_blocking = await self._has_blocking_overlay()
+        state.warm_ready = all(
+            [
+                state.session_ok,
+                state.route_ok,
+                state.period_ok,
+                state.button_present,
+                state.viewport_ok,
+            ]
+        )
+        state.hot_ready = state.warm_ready and state.button_clickable and not state.captcha_blocking
+        if not state.hot_ready:
+            state.last_failure_reason = "not-hot-ready"
+        return state
+
+    async def attempt_recover(self, package: str, period: str) -> bool:
+        if not self._page:
+            return False
+        await self._page.evaluate("() => window.scrollTo(0, 800)")
+        await asyncio.sleep(0.05)
+        await self._select_period_tab(period)
+        button = await self._resolve_buy_button(package)
+        return button is not None
+
+    async def click_purchase(self, package: str, period: str) -> bool:
+        return await self.click_buy_button(package, period)
+
+    async def _resolve_buy_button(self, package: str):
+        if not self._page:
+            return None
+        button_map = {"Lite": 0, "Pro": 1, "Max": 2}
+        buttons = await self._page.query_selector_all(".buy-btn")
+        index = button_map.get(package)
+        if index is None or len(buttons) <= index:
+            return None
+        return buttons[index]
+
+    async def _has_login_prompt(self) -> bool:
+        if not self._page:
+            return True
+        for selector in ("text=登录 / 注册", "text=登录/注册", "text=登录"):
+            locator = self._page.locator(selector)
+            if await locator.count() and await locator.first.is_visible():
+                return True
+        return False
+
+    async def _has_blocking_overlay(self) -> bool:
+        if not self._page:
+            return False
+        overlay = await self._page.query_selector(".captcha-component, .tencent-captcha-dy, .ant-modal-mask")
+        return overlay is not None
 
     async def handle_captcha(self, timeout: float = 15.0) -> bool:
         """处理滑块验证码

@@ -15,12 +15,13 @@ from tools.glm_coding_bot.config import Config
 from tools.glm_coding_bot.core.browser_controller import BrowserController
 
 
+@pytest.fixture
+def controller():
+    return BrowserController(headless=True, cookies_file="test_cookies.json")
+
+
 class TestBrowserController:
     """BrowserController测试类"""
-
-    @pytest.fixture
-    def controller(self):
-        return BrowserController(headless=True, cookies_file="test_cookies.json")
 
     @pytest.fixture
     def mock_config(self, tmp_path):
@@ -131,6 +132,40 @@ class TestBrowserController:
         assert stats["click_count"] == 10
         assert stats["error_count"] == 2
         assert stats["uptime"] >= 60
+
+
+@pytest.mark.asyncio
+async def test_get_page_state_reports_hot_ready_when_button_clickable(controller):
+    mock_page = AsyncMock()
+    mock_page.url = f"{controller.base_url}/glm-coding"
+    controller._page = mock_page
+    controller._initialized = True
+    controller._select_period_tab = AsyncMock(return_value=True)
+    controller._has_login_prompt = AsyncMock(return_value=False)
+    controller._has_blocking_overlay = AsyncMock(return_value=False)
+
+    mock_button = AsyncMock()
+    mock_button.is_visible = AsyncMock(return_value=True)
+    mock_button.is_enabled = AsyncMock(return_value=True)
+    mock_page.query_selector_all = AsyncMock(return_value=[mock_button, mock_button, mock_button])
+
+    state = await controller.refresh_page_state("Max", "quarterly")
+
+    assert state.warm_ready is True
+    assert state.hot_ready is True
+
+
+@pytest.mark.asyncio
+async def test_attempt_recover_only_repositions_existing_page(controller):
+    controller._page = AsyncMock()
+    controller.navigate_to_purchase = AsyncMock()
+    controller._select_period_tab = AsyncMock(return_value=True)
+    controller._resolve_buy_button = AsyncMock(return_value=AsyncMock())
+
+    recovered = await controller.attempt_recover("Max", "quarterly")
+
+    assert recovered is True
+    controller.navigate_to_purchase.assert_not_awaited()
 
 
 if __name__ == "__main__":

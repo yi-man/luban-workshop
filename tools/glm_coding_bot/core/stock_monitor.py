@@ -33,6 +33,27 @@ class StockInfo:
             self.timestamp = time.time()
 
 
+def _extract_business_signal(result_data: dict | None) -> tuple[bool, int | None, int | None]:
+    if not isinstance(result_data, dict):
+        return False, None, None
+
+    tokens = result_data.get("tokens")
+    times = result_data.get("times")
+    magnitude = result_data.get("magnitude")
+
+    parsed_tokens = tokens if isinstance(tokens, int) else None
+    parsed_times = times if isinstance(times, int) else None
+
+    if parsed_tokens is not None and parsed_tokens > 0:
+        return True, parsed_tokens, parsed_times
+    if parsed_times is not None and parsed_times > 0:
+        return True, parsed_tokens, parsed_times
+    if isinstance(magnitude, int) and magnitude > 0:
+        return True, parsed_tokens, parsed_times
+
+    return False, parsed_tokens, parsed_times
+
+
 class StockMonitor:
     """库存监控器
 
@@ -99,13 +120,14 @@ class StockMonitor:
             if data.get("code") != 200:
                 return StockInfo(product_id=self.product_id, available=False, raw_data=data)
 
-            result_data = data.get("data", {})
+            result_data = data.get("data")
+            available, tokens, times = _extract_business_signal(result_data)
 
             return StockInfo(
                 product_id=self.product_id,
-                available=True,
-                tokens=result_data.get("tokens"),
-                times=result_data.get("times"),
+                available=available,
+                tokens=tokens,
+                times=times,
                 raw_data=data,
             )
 

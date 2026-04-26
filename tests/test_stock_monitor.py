@@ -35,6 +35,40 @@ def _make_mock_session(responses=None):
     return mock_session
 
 
+@pytest.fixture
+def monitor():
+    return StockMonitor(product_id="product-test-123", poll_interval=0.01)
+
+
+@pytest.mark.asyncio
+async def test_check_once_without_business_signal_is_not_available(monitor):
+    mock_resp = _make_mock_response(status=200, json_data={"code": 200, "data": {}})
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+
+    result = await monitor.check_stock_once(session=mock_session)
+
+    assert result.available is False
+
+
+@pytest.mark.asyncio
+async def test_check_once_with_positive_magnitude_is_available(monitor):
+    mock_resp = _make_mock_response(
+        status=200,
+        json_data={
+            "code": 200,
+            "data": {"magnitude": 100, "productId": "product-test-123"},
+        },
+    )
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+
+    result = await monitor.check_stock_once(session=mock_session)
+
+    assert result.available is True
+    assert result.raw_data["data"]["magnitude"] == 100
+
+
 class TestStockMonitor:
     """StockMonitor测试类"""
 

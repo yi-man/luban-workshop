@@ -39,9 +39,13 @@ class TestIntegration:
             start_time = time.time()
             found = await monitor.wait_for_stock(timeout=1.0)
             elapsed = time.time() - start_time
+            stock_info = monitor.get_last_stock_info()
 
             assert found is True
             assert elapsed < 0.5
+            assert stock_info is not None
+            assert stock_info.available is True
+            assert stock_info.raw_data["data"]["magnitude"] == 100
 
     @pytest.mark.asyncio
     async def test_performance_benchmark(self):

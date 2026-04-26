@@ -41,14 +41,14 @@ def _extract_business_signal(result_data: dict | None) -> tuple[bool, int | None
     times = result_data.get("times")
     magnitude = result_data.get("magnitude")
 
-    parsed_tokens = tokens if isinstance(tokens, int) else None
-    parsed_times = times if isinstance(times, int) else None
+    parsed_tokens = tokens if type(tokens) is int else None
+    parsed_times = times if type(times) is int else None
 
     if parsed_tokens is not None and parsed_tokens > 0:
         return True, parsed_tokens, parsed_times
     if parsed_times is not None and parsed_times > 0:
         return True, parsed_tokens, parsed_times
-    if isinstance(magnitude, int) and magnitude > 0:
+    if type(magnitude) is int and magnitude > 0:
         return True, parsed_tokens, parsed_times
 
     return False, parsed_tokens, parsed_times

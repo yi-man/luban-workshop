@@ -173,6 +173,10 @@ class StockMonitor:
     def get_last_stock_info(self) -> Optional[StockInfo]:
         return self._last_stock_info
 
+    @property
+    def session(self) -> Optional[aiohttp.ClientSession]:
+        return self._external_session
+
     def stop(self) -> None:
         self._should_stop = True
 
@@ -204,7 +208,7 @@ class StockSignalMonitor:
         return await self.monitor.check_stock_once(session=session)
 
     async def confirm_hit(self) -> StockSignal:
-        external_session = self.monitor._external_session
+        external_session = self.monitor.session
         if external_session is not None:
             return await self._confirm_hit_with_session(external_session)
 

@@ -259,6 +259,12 @@ class TestStockMonitor:
 
         assert result.available is False
 
+    def test_exposes_configured_shared_session(self):
+        shared_session = MagicMock()
+        monitor = StockMonitor(product_id="product-test-123", session=shared_session)
+
+        assert monitor.session is shared_session
+
     @pytest.mark.asyncio
     async def test_wait_for_stock_success(self, stock_monitor):
         mock_resp = _make_mock_response(status=200, json_data={

@@ -127,39 +127,91 @@ async def test_check_once_with_boolean_business_signal_is_not_available(stock_mo
 @pytest.mark.asyncio
 async def test_signal_monitor_requires_second_hit(monkeypatch):
     monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
+    first_raw = {"data": {"magnitude": 1}}
+    second_raw = {"data": {"magnitude": 2}}
     responses = [
-        StockInfo(product_id="product-test-123", available=True, raw_data={"data": {"magnitude": 1}}),
-        StockInfo(product_id="product-test-123", available=True, raw_data={"data": {"magnitude": 1}}),
+        StockInfo(product_id="product-test-123", available=True, raw_data=first_raw, timestamp=100.0),
+        StockInfo(product_id="product-test-123", available=True, raw_data=second_raw, timestamp=101.0),
     ]
 
-    async def fake_check_once():
+    async def fake_check_once(session=None):
         return responses.pop(0)
 
     monkeypatch.setattr(monitor, "check_once", fake_check_once)
 
     signal = await monitor.confirm_hit()
 
+    assert signal.product_id == "product-test-123"
+    assert signal.raw_hit is True
     assert signal.confirmed is True
     assert signal.confidence == 2
+    assert signal.first_hit_at == 100.0
+    assert signal.confirmed_at == 101.0
+    assert signal.last_raw_response == second_raw
 
 
 @pytest.mark.asyncio
 async def test_signal_monitor_rejects_unconfirmed_hit(monkeypatch):
     monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
+    first_raw = {"data": {"magnitude": 1}}
+    second_raw = {"data": {}}
     responses = [
-        StockInfo(product_id="product-test-123", available=True, raw_data={"data": {"magnitude": 1}}),
-        StockInfo(product_id="product-test-123", available=False, raw_data={"data": {}}),
+        StockInfo(product_id="product-test-123", available=True, raw_data=first_raw, timestamp=200.0),
+        StockInfo(product_id="product-test-123", available=False, raw_data=second_raw, timestamp=201.0),
     ]
 
-    async def fake_check_once():
+    async def fake_check_once(session=None):
         return responses.pop(0)
 
     monkeypatch.setattr(monitor, "check_once", fake_check_once)
 
     signal = await monitor.confirm_hit()
 
+    assert signal.product_id == "product-test-123"
     assert signal.confirmed is False
     assert signal.raw_hit is True
+    assert signal.confidence == 1
+    assert signal.first_hit_at == 200.0
+    assert signal.confirmed_at is None
+    assert signal.last_raw_response == second_raw
+
+
+@pytest.mark.asyncio
+async def test_signal_monitor_confirm_hit_reuses_shared_session():
+    monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
+    first_payload = {
+        "code": 200,
+        "data": {"magnitude": 1, "productId": "product-test-123"},
+    }
+    second_payload = {
+        "code": 200,
+        "data": {"magnitude": 2, "productId": "product-test-123"},
+    }
+    responses = [
+        _make_mock_response(status=200, json_data=first_payload),
+        _make_mock_response(status=200, json_data=second_payload),
+    ]
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=responses)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+    client_session_factory = MagicMock(return_value=mock_session)
+    sleep_mock = AsyncMock()
+
+    with patch("tools.glm_coding_bot.core.stock_monitor.aiohttp.ClientSession", client_session_factory):
+        with patch("tools.glm_coding_bot.core.stock_monitor.asyncio.sleep", sleep_mock):
+            signal = await monitor.confirm_hit()
+
+    assert client_session_factory.call_count == 1
+    assert mock_session.get.call_count == 2
+    assert signal.raw_hit is True
+    assert signal.confirmed is True
+    assert signal.confidence == 2
+    assert signal.first_hit_at is not None
+    assert signal.confirmed_at is not None
+    assert signal.confirmed_at >= signal.first_hit_at
+    assert signal.last_raw_response == second_payload
+    sleep_mock.assert_awaited_once_with(0.02)
 
 
 class TestStockMonitor:

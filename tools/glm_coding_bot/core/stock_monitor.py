@@ -191,14 +191,29 @@ class StockSignal:
 class StockSignalMonitor:
     def __init__(self, product_id: str, poll_interval: float = 0.02):
         self.monitor = StockMonitor(product_id=product_id, poll_interval=poll_interval)
-        self.product_id = product_id
-        self.poll_interval = poll_interval
 
-    async def check_once(self) -> StockInfo:
-        return await self.monitor.check_stock_once()
+    @property
+    def product_id(self) -> str:
+        return self.monitor.product_id
+
+    @property
+    def poll_interval(self) -> float:
+        return self.monitor.poll_interval
+
+    async def check_once(self, session: Optional[aiohttp.ClientSession] = None) -> StockInfo:
+        return await self.monitor.check_stock_once(session=session)
 
     async def confirm_hit(self) -> StockSignal:
-        first = await self.check_once()
+        external_session = self.monitor._external_session
+        if external_session is not None:
+            return await self._confirm_hit_with_session(external_session)
+
+        timeout = aiohttp.ClientTimeout(total=self.monitor.api_timeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            return await self._confirm_hit_with_session(session)
+
+    async def _confirm_hit_with_session(self, session: aiohttp.ClientSession) -> StockSignal:
+        first = await self.check_once(session=session)
         signal = StockSignal(
             product_id=self.product_id,
             raw_hit=first.available,
@@ -210,7 +225,7 @@ class StockSignalMonitor:
             return signal
 
         await asyncio.sleep(self.poll_interval)
-        second = await self.check_once()
+        second = await self.check_once(session=session)
         signal.last_raw_response = second.raw_data
         if second.available:
             signal.confirmed = True

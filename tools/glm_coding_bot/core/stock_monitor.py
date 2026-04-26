@@ -177,6 +177,48 @@ class StockMonitor:
         self._should_stop = True
 
 
+@dataclass
+class StockSignal:
+    product_id: str
+    raw_hit: bool = False
+    confirmed: bool = False
+    confidence: int = 0
+    first_hit_at: float | None = None
+    confirmed_at: float | None = None
+    last_raw_response: dict | None = None
+
+
+class StockSignalMonitor:
+    def __init__(self, product_id: str, poll_interval: float = 0.02):
+        self.monitor = StockMonitor(product_id=product_id, poll_interval=poll_interval)
+        self.product_id = product_id
+        self.poll_interval = poll_interval
+
+    async def check_once(self) -> StockInfo:
+        return await self.monitor.check_stock_once()
+
+    async def confirm_hit(self) -> StockSignal:
+        first = await self.check_once()
+        signal = StockSignal(
+            product_id=self.product_id,
+            raw_hit=first.available,
+            confidence=1 if first.available else 0,
+            first_hit_at=first.timestamp if first.available else None,
+            last_raw_response=first.raw_data,
+        )
+        if not first.available:
+            return signal
+
+        await asyncio.sleep(self.poll_interval)
+        second = await self.check_once()
+        signal.last_raw_response = second.raw_data
+        if second.available:
+            signal.confirmed = True
+            signal.confidence = 2
+            signal.confirmed_at = second.timestamp
+        return signal
+
+
 async def check_stock(product_id: str) -> StockInfo:
     monitor = StockMonitor(product_id=product_id)
     return await monitor.check_stock_once()

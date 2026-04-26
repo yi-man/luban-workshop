@@ -9,7 +9,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tools.glm_coding_bot.core.stock_monitor import StockMonitor
+from tools.glm_coding_bot.core.stock_monitor import StockInfo, StockMonitor, StockSignalMonitor
 
 
 def _make_mock_response(status=200, json_data=None):
@@ -122,6 +122,44 @@ async def test_check_once_with_boolean_business_signal_is_not_available(stock_mo
     assert result.available is False
     assert result.tokens is None
     assert result.times is None
+
+
+@pytest.mark.asyncio
+async def test_signal_monitor_requires_second_hit(monkeypatch):
+    monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
+    responses = [
+        StockInfo(product_id="product-test-123", available=True, raw_data={"data": {"magnitude": 1}}),
+        StockInfo(product_id="product-test-123", available=True, raw_data={"data": {"magnitude": 1}}),
+    ]
+
+    async def fake_check_once():
+        return responses.pop(0)
+
+    monkeypatch.setattr(monitor, "check_once", fake_check_once)
+
+    signal = await monitor.confirm_hit()
+
+    assert signal.confirmed is True
+    assert signal.confidence == 2
+
+
+@pytest.mark.asyncio
+async def test_signal_monitor_rejects_unconfirmed_hit(monkeypatch):
+    monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
+    responses = [
+        StockInfo(product_id="product-test-123", available=True, raw_data={"data": {"magnitude": 1}}),
+        StockInfo(product_id="product-test-123", available=False, raw_data={"data": {}}),
+    ]
+
+    async def fake_check_once():
+        return responses.pop(0)
+
+    monkeypatch.setattr(monitor, "check_once", fake_check_once)
+
+    signal = await monitor.confirm_hit()
+
+    assert signal.confirmed is False
+    assert signal.raw_hit is True
 
 
 class TestStockMonitor:

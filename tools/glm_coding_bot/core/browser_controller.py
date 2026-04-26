@@ -203,12 +203,12 @@ class BrowserController:
 
         state.session_ok = not await self._has_login_prompt()
         state.route_ok = self.base_url in page_url
-        state.period_ok = await self._select_period_tab(period)
+        state.period_ok = await self._is_period_tab_ready(period)
         button = await self._resolve_buy_button(package)
         state.button_present = button is not None
         if button is not None:
             state.button_clickable = await button.is_visible() and await button.is_enabled()
-            state.viewport_ok = state.button_clickable
+            state.viewport_ok = await self._is_button_in_viewport(button)
         state.captcha_blocking = await self._has_blocking_overlay()
         state.warm_ready = all(
             [
@@ -230,8 +230,8 @@ class BrowserController:
         await self._page.evaluate("() => window.scrollTo(0, 800)")
         await asyncio.sleep(0.05)
         await self._select_period_tab(period)
-        button = await self._resolve_buy_button(package)
-        return button is not None
+        state = await self.refresh_page_state(package, period)
+        return state.hot_ready
 
     async def click_purchase(self, package: str, period: str) -> bool:
         return await self.click_buy_button(package, period)
@@ -254,6 +254,51 @@ class BrowserController:
             if await locator.count() and await locator.first.is_visible():
                 return True
         return False
+
+    async def _is_period_tab_ready(self, period: str) -> bool:
+        if not self._page:
+            return False
+
+        period_keywords = {
+            "monthly": ["连续包月", "包月", "monthly", "月"],
+            "quarterly": ["连续包季", "包季", "quarterly", "季"],
+            "yearly": ["连续包年", "包年", "yearly", "年"],
+        }
+        keywords = period_keywords.get(period, [])
+        if not keywords:
+            return False
+
+        for keyword in keywords:
+            locator = self._page.locator(f"text={keyword}")
+            if not await locator.count():
+                continue
+            try:
+                if await locator.first.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _is_button_in_viewport(self, button) -> bool:
+        if not self._page:
+            return False
+
+        box = await button.bounding_box()
+        if not box:
+            return False
+
+        width = box.get("width", 0)
+        height = box.get("height", 0)
+        x = box.get("x", -1)
+        y = box.get("y", -1)
+        if width <= 0 or height <= 0 or x < 0 or y < 0:
+            return False
+
+        viewport = getattr(self._page, "viewport_size", None)
+        if not viewport:
+            return True
+
+        return x + width <= viewport["width"] and y + height <= viewport["height"]
 
     async def _has_blocking_overlay(self) -> bool:
         if not self._page:

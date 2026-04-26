@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools.glm_coding_bot.config import Config
-from tools.glm_coding_bot.core.browser_controller import BrowserController
+from tools.glm_coding_bot.core.browser_controller import BrowserController, PageState
 
 
 @pytest.fixture
@@ -138,15 +138,18 @@ class TestBrowserController:
 async def test_get_page_state_reports_hot_ready_when_button_clickable(controller):
     mock_page = AsyncMock()
     mock_page.url = f"{controller.base_url}/glm-coding"
+    mock_page.viewport_size = {"width": controller.width, "height": controller.height}
     controller._page = mock_page
     controller._initialized = True
-    controller._select_period_tab = AsyncMock(return_value=True)
+    controller._select_period_tab = AsyncMock(side_effect=AssertionError("refresh should not mutate page state"))
+    controller._is_period_tab_ready = AsyncMock(return_value=True)
     controller._has_login_prompt = AsyncMock(return_value=False)
     controller._has_blocking_overlay = AsyncMock(return_value=False)
 
     mock_button = AsyncMock()
     mock_button.is_visible = AsyncMock(return_value=True)
     mock_button.is_enabled = AsyncMock(return_value=True)
+    mock_button.bounding_box = AsyncMock(return_value={"x": 100, "y": 250, "width": 180, "height": 48})
     mock_page.query_selector_all = AsyncMock(return_value=[mock_button, mock_button, mock_button])
 
     state = await controller.refresh_page_state("Max", "quarterly")
@@ -161,12 +164,27 @@ async def test_attempt_recover_only_repositions_existing_page(controller):
     controller.navigate_to_purchase = AsyncMock()
     controller._select_period_tab = AsyncMock(return_value=True)
     controller._resolve_buy_button = AsyncMock(return_value=AsyncMock())
+    controller.refresh_page_state = AsyncMock(return_value=PageState(warm_ready=True, hot_ready=True))
 
     recovered = await controller.attempt_recover("Max", "quarterly")
 
     assert recovered is True
     controller._page.evaluate.assert_awaited_once_with("() => window.scrollTo(0, 800)")
+    controller.refresh_page_state.assert_awaited_once_with("Max", "quarterly")
     controller.navigate_to_purchase.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_attempt_recover_fails_when_page_is_still_not_ready(controller):
+    controller._page = AsyncMock()
+    controller._select_period_tab = AsyncMock(return_value=True)
+    controller._resolve_buy_button = AsyncMock(return_value=AsyncMock())
+    controller.refresh_page_state = AsyncMock(return_value=PageState(warm_ready=True, hot_ready=False))
+
+    recovered = await controller.attempt_recover("Max", "quarterly")
+
+    assert recovered is False
+    controller.refresh_page_state.assert_awaited_once_with("Max", "quarterly")
 
 
 if __name__ == "__main__":

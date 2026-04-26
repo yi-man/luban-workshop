@@ -17,31 +17,31 @@ playwright install chromium
 ### 登录
 
 ```bash
-uv run glm-coding-bot login --phone 13800138000
+uv run python -m tools.glm_coding_bot login
 ```
 
-按提示输入短信验证码，cookies 会保存到 `cookies.json`。
+自动打开有头浏览器，导航到登录页面，支持扫码或手机验证码登录。登录完成后在终端按回车，浏览器状态自动保存到 `~/.glm-coding-bot`，后续无需重复登录。
 
 ### 检查登录状态
 
 ```bash
-uv run glm-coding-bot check-login
+uv run python -m tools.glm_coding_bot check-login
 ```
 
 ### 抢购
 
 ```bash
 # 默认：Max 套餐 / 连续包季 / 10:00:00
-uv run glm-coding-bot buy
+uv run python -m tools.glm_coding_bot buy
 
 # 自定义参数
-uv run glm-coding-bot buy --package Pro --period monthly --time 10:00:00
+uv run python -m tools.glm_coding_bot buy --package Pro --period monthly --time 10:00:00
 
 # 立即执行（不等待目标时间）
-uv run glm-coding-bot buy --now
+uv run python -m tools.glm_coding_bot buy --now
 
 # 无头模式
-uv run glm-coding-bot buy --headless
+uv run python -m tools.glm_coding_bot buy --headless
 ```
 
 | 参数 | 说明 | 可选值 |
@@ -55,13 +55,13 @@ uv run glm-coding-bot buy --headless
 ### 仅监控库存
 
 ```bash
-uv run glm-coding-bot monitor --package Max --period quarterly --duration 120
+uv run python -m tools.glm_coding_bot monitor --package Max --period quarterly --duration 120
 ```
 
 ### 功能测试
 
 ```bash
-uv run glm-coding-bot test
+uv run python -m tools.glm_coding_bot test
 ```
 
 ## 流程
@@ -71,7 +71,7 @@ API 高频轮询 (50次/秒)  →  检测到库存  →  自动打开浏览器  
 ```
 
 1. **库存检测**：每 20ms 轮询一次 API，NTP 时间同步确保精度
-2. **浏览器执行**：加载已保存的 cookies 自动登录，导航到购买页面，点击购买按钮
+2. **浏览器执行**：使用持久化浏览器配置文件（`~/.glm-coding-bot`）自动恢复登录状态，导航到购买页面，点击购买按钮
 3. **验证码处理**：优先尝试 OpenCV 边缘检测定位滑块，模拟人类拖拽轨迹；失败 3 次后提示人工操作
 
 ## 产品映射

@@ -4,11 +4,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _default_user_data_dir() -> Path:
+    return Path.home() / ".glm-coding-bot"
+
+
 @dataclass
 class Config:
     base_url: str = "https://bigmodel.cn"
     api_timeout: float = 2.0
-    cookies_file: Path = field(default_factory=lambda: Path("cookies.json"))
+    user_data_dir: Path = field(default_factory=_default_user_data_dir)
     target_product: str = "product-5d3a03"
     headless: bool = False
     poll_interval: float = 0.02

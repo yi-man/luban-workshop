@@ -10,16 +10,16 @@ CLI 命令行接口 - GLM Coding Bot 用户交互
 """
 
 import asyncio
-import json
-import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import click
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm
 from rich.status import Status
 
 from tools.glm_coding_bot.config import get_config
@@ -30,19 +30,67 @@ from tools.glm_coding_bot.product_mapping import (
     get_product_id,
 )
 from tools.glm_coding_bot.utils.logger import get_logger
-from tools.glm_coding_bot.utils.time_sync import sync_time
+from tools.glm_coding_bot.utils.time_sync import TimeSync, sync_time
 
 console = Console()
 logger = get_logger()
 
+LOGIN_SELECTORS = (
+    "text=登录 / 注册",
+    "text=登录/注册",
+    "text=登录",
+)
+AUTH_UI_SELECTORS = (
+    "text=个人中心",
+    "text=我的套餐",
+    "text=我的订单",
+    "text=退出登录",
+)
+ANONYMOUS_COOKIE_NAMES = {
+    "acw_tc",
+    "_ga",
+    "_gid",
+    "_gat",
+}
+ANONYMOUS_COOKIE_PREFIXES = (
+    "acw_",
+    "hm_",
+    "_ga",
+    "_gid",
+    "_gat",
+    "sensorsdata",
+)
+AUTH_COOKIE_HINTS = (
+    "auth",
+    "login",
+    "passport",
+    "refresh",
+    "session",
+    "token",
+    "uid",
+    "user",
+)
+
+
+@dataclass(frozen=True)
+class SessionCheckResult:
+    status: Literal["valid", "invalid", "error"]
+    detail: str
+
+    @classmethod
+    def valid(cls, detail: str) -> "SessionCheckResult":
+        return cls("valid", detail)
+
+    @classmethod
+    def invalid(cls, detail: str) -> "SessionCheckResult":
+        return cls("invalid", detail)
+
+    @classmethod
+    def error(cls, detail: str) -> "SessionCheckResult":
+        return cls("error", detail)
+
 
 # ============== 验证函数 ==============
-
-def validate_phone(phone: str) -> bool:
-    """验证手机号格式"""
-    pattern = r"^1[3-9]\d{9}$"
-    return bool(re.match(pattern, phone))
-
 
 def validate_time(time_str: str) -> bool:
     """验证时间格式 (HH:MM:SS)"""
@@ -81,69 +129,62 @@ def cli():
 
 
 @cli.command()
-@click.option("--phone", prompt="手机号", help="登录手机号")
-@click.option("--headless", is_flag=True, help="无头模式")
-def login(phone: str, headless: bool):
-    """登录并保存 cookies"""
-    if not validate_phone(phone):
-        console.print("[red]手机号格式不正确，请输入11位手机号[/red]")
-        return
+def login():
+    """打开浏览器登录（扫码/手机验证码），登录状态自动保存"""
+
+    config = get_config()
+    user_data_dir = config.user_data_dir
+    user_data_dir.mkdir(parents=True, exist_ok=True)
 
     console.print(Panel.fit(
         "[bold cyan]GLM Coding Bot - 登录[/bold cyan]\n"
-        f"[dim]手机号: {phone}[/dim]",
+        f"[dim]浏览器数据目录: {user_data_dir}[/dim]",
         border_style="cyan",
     ))
 
     async def do_login():
         from playwright.async_api import async_playwright
 
-        console.print("[blue]正在启动浏览器...[/blue]")
+        console.print("[blue]正在启动浏览器（有头模式）...[/blue]")
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=headless)
-            context = await browser.new_context(
+            context = await p.chromium.launch_persistent_context(
+                str(user_data_dir),
+                headless=False,
                 viewport={"width": 1280, "height": 900},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                ],
             )
-            page = await context.new_page()
 
-            with Status("[blue]正在加载登录页面...", console=console):
+            page = context.pages[0] if context.pages else await context.new_page()
+
+            with Status("[blue]正在打开登录页面...", console=console):
                 await page.goto("https://bigmodel.cn/glm-coding")
-                await page.click("text=登录 / 注册")
-                await asyncio.sleep(1)
 
-            console.print("[blue]正在输入手机号...[/blue]")
-            await page.fill('[placeholder="请输入手机号"]', phone)
+            console.print("[bold yellow]请在浏览器中完成登录（扫码/手机验证码）[/bold yellow]")
+            console.print("[dim]登录完成后，按回车键继续...[/dim]")
+            input()
 
-            console.print("[yellow]正在获取验证码...[/yellow]")
-            await page.click("text=获取验证码")
+            with Status("[blue]正在验证登录状态...", console=console):
+                await page.goto("https://bigmodel.cn/glm-coding", wait_until="domcontentloaded", timeout=15000)
+                await page.wait_for_timeout(1200)
+                session_result = await _inspect_login_session(page, context)
 
-            console.print("[green]验证码已发送到手机，请输入:[/green]")
-            code = Prompt.ask("验证码")
+            if session_result.status == "valid":
+                console.print(f"[green]登录成功！{session_result.detail}[/green]")
+                console.print(f"[dim]  浏览器数据目录: {user_data_dir}[/dim]")
+                console.print("[dim]  下次运行将自动使用此登录状态[/dim]")
+            elif session_result.status == "invalid":
+                console.print("[yellow]未检测到有效登录状态，请确认是否已成功登录[/yellow]")
+                console.print(f"[dim]  {session_result.detail}[/dim]")
+                console.print("[dim]  你可以重新运行 login 命令[/dim]")
+            else:
+                console.print("[yellow]暂时无法确认登录状态[/yellow]")
+                console.print(f"[dim]  {session_result.detail}[/dim]")
+                console.print("[dim]  你可以重新运行 login 命令[/dim]")
 
-            if not code or len(code) != 6:
-                console.print("[red]验证码格式不正确[/red]")
-                await browser.close()
-                return
-
-            await page.fill('[placeholder="请输入验证码"]', code)
-
-            with Status("[blue]正在登录...", console=console):
-                await page.click("button:has-text('登录 / 注册')")
-                await asyncio.sleep(3)
-
-            # 保存 cookies
-            cookies = await context.cookies()
-            cookies_file = Path("cookies.json")
-            with open(cookies_file, "w") as f:
-                json.dump(cookies, f, indent=2)
-
-            console.print(f"[green]Cookies已保存到: {cookies_file}[/green]")
-            console.print(f"[dim]  共 {len(cookies)} 个cookies[/dim]")
-
-            await browser.close()
+            await context.close()
 
     asyncio.run(do_login())
 
@@ -151,51 +192,134 @@ def login(phone: str, headless: bool):
 @cli.command("check-login")
 def check_login():
     """检查登录状态"""
-    cookies_file = Path("cookies.json")
+    config = get_config()
+    user_data_dir = config.user_data_dir
 
     console.print(Panel.fit(
         "[bold cyan]登录状态检查[/bold cyan]",
         border_style="cyan",
     ))
 
-    if not cookies_file.exists():
+    if not user_data_dir.exists():
         console.print("[red]未找到登录信息[/red]")
-        console.print("[dim]请先运行: glm-coding-bot login --phone <手机号>[/dim]")
+        console.print("[dim]请先运行: glm-coding-bot login[/dim]")
         return
 
-    try:
-        with open(cookies_file) as f:
-            cookies = json.load(f)
+    # 检查浏览器数据目录是否存在且有内容
+    cookie_files = list(user_data_dir.glob("Default/Cookies")) + list(user_data_dir.glob("Profile*/Cookies"))
 
-        if not cookies:
-            console.print("[yellow]Cookies文件为空[/yellow]")
-            return
-
-        total = len(cookies)
-        expired = [c for c in cookies if (c.get("expires") or float("inf")) < time.time()]
-        valid = total - len(expired)
-
-        if expired:
-            console.print(f"[yellow]登录已过期 ({len(expired)}/{total} cookies过期)[/yellow]")
-            console.print("[dim]请重新运行: glm-coding-bot login --phone <手机号>[/dim]")
+    detail = "no-cookie-files"
+    if cookie_files:
+        console.print("[blue]正在验证会话有效性...[/blue]")
+        session_result = asyncio.run(_verify_login_session(user_data_dir))
+        detail = session_result.detail
+        if session_result.status == "valid":
+            console.print("[green]登录状态: 有效[/green]")
+        elif session_result.status == "invalid":
+            console.print("[yellow]登录状态: 无效[/yellow]")
+            console.print("[dim]请重新运行: glm-coding-bot login[/dim]")
         else:
-            console.print(f"[green]登录状态有效[/green]")
-            console.print(f"[dim]  有效cookies: {valid}/{total}[/dim]")
+            console.print("[yellow]登录状态检查失败[/yellow]")
+            console.print(f"[dim]{session_result.detail}[/dim]")
+    else:
+        console.print("[yellow]登录状态: 无效[/yellow]")
+        console.print("[dim]请重新运行: glm-coding-bot login[/dim]")
 
-        domains: dict[str, int] = {}
-        for c in cookies:
-            domain = c.get("domain", "unknown")
-            domains[domain] = domains.get(domain, 0) + 1
+    # 调试信息（仅日志，不在 CLI 展示）
+    logger.debug("check-login detail: %s", detail if cookie_files else "no-cookie-files")
 
-        console.print("\n[bold]Cookie域名分布:[/bold]")
-        for domain, count in sorted(domains.items(), key=lambda x: -x[1])[:5]:
-            console.print(f"  [dim]{domain}: {count}[/dim]")
+    # 兼容旧版 cookies.json
+    cookies_file = Path("cookies.json")
+    if cookies_file.exists():
+        console.print(f"\n[yellow]检测到旧版 cookies.json 文件[/yellow]")
+        console.print("[dim]新版本使用浏览器持久化存储，该文件不再需要[/dim]")
 
-    except json.JSONDecodeError as e:
-        console.print(f"[red]Cookies文件格式错误: {e}[/red]")
-        console.print("[dim]建议删除cookies.json后重新登录[/dim]")
+
+def _is_unexpired_cookie(cookie: dict) -> bool:
+    expires = cookie.get("expires")
+    return expires in (None, -1) or expires > time.time()
+
+
+def _looks_like_auth_cookie(name: str) -> bool:
+    lowered = name.lower()
+    if lowered in ANONYMOUS_COOKIE_NAMES:
+        return False
+    if any(lowered.startswith(prefix) for prefix in ANONYMOUS_COOKIE_PREFIXES):
+        return False
+    return any(hint in lowered for hint in AUTH_COOKIE_HINTS)
+
+
+def _classify_login_session(
+    cookies: list[dict],
+    login_visible: bool,
+    auth_ui_visible: bool,
+) -> SessionCheckResult:
+    if login_visible:
+        return SessionCheckResult.invalid("页面显示登录入口，当前会话不可用")
+
+    valid_cookies = [
+        cookie
+        for cookie in cookies
+        if "bigmodel" in cookie.get("domain", "") and _is_unexpired_cookie(cookie)
+    ]
+    auth_cookies = [
+        cookie for cookie in valid_cookies if _looks_like_auth_cookie(cookie.get("name", ""))
+    ]
+
+    if auth_ui_visible:
+        return SessionCheckResult.valid("检测到已登录页面元素")
+    if auth_cookies:
+        return SessionCheckResult.valid(f"检测到 {len(auth_cookies)} 个认证Cookie")
+    if valid_cookies:
+        return SessionCheckResult.error("检测到站点Cookie，但缺少可确认的登录信号")
+    return SessionCheckResult.error("未检测到可确认的登录信号")
+
+
+async def _has_visible_selector(page, selectors: tuple[str, ...]) -> bool:
+    for selector in selectors:
+        try:
+            locator = page.locator(selector)
+            if await locator.count() and await locator.first.is_visible():
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _inspect_login_session(page, context) -> SessionCheckResult:
+    cookies = await context.cookies("https://bigmodel.cn")
+    login_visible = await _has_visible_selector(page, LOGIN_SELECTORS)
+    auth_ui_visible = await _has_visible_selector(page, AUTH_UI_SELECTORS)
+    return _classify_login_session(cookies, login_visible, auth_ui_visible)
+
+
+async def _verify_login_session(user_data_dir: Path) -> SessionCheckResult:
+    """通过实际打开页面验证会话是否仍有效。"""
+    from playwright.async_api import async_playwright
+
+    context = None
+    try:
+        async with async_playwright() as p:
+            context = await p.chromium.launch_persistent_context(
+                str(user_data_dir),
+                headless=True,
+                viewport={"width": 1280, "height": 900},
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto("https://bigmodel.cn/glm-coding", wait_until="domcontentloaded", timeout=15000)
+            await page.wait_for_timeout(1200)
+            return await _inspect_login_session(page, context)
     except Exception as e:
-        console.print(f"[red]检查失败: {e}[/red]")
+        return SessionCheckResult.error(f"会话验证失败: {e}")
+    finally:
+        if context:
+            try:
+                await context.close()
+            except Exception:
+                # 可能已由 Playwright 连接生命周期自动关闭
+                pass
 
 
 @cli.command()
@@ -226,24 +350,36 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
         border_style="cyan",
     ))
 
-    cookies_file = Path("cookies.json")
-    if not cookies_file.exists():
+    config = get_config()
+    if not config.user_data_dir.exists():
         console.print("[red]未登录，请先运行:[/red]")
-        console.print("[dim]  glm-coding-bot login --phone <手机号>[/dim]")
+        console.print("[dim]  glm-coding-bot login[/dim]")
         return
 
-    try:
-        with open(cookies_file) as f:
-            cookies = json.load(f)
-        valid_cookies = [c for c in cookies if (c.get("expires") or float("inf")) > time.time()]
-        console.print(f"[green]登录状态有效 ({len(valid_cookies)}/{len(cookies)} cookies)[/green]")
-    except Exception as e:
-        console.print(f"[yellow]读取登录状态失败: {e}[/yellow]")
+    cookie_files = list(config.user_data_dir.glob("Default/Cookies")) + list(config.user_data_dir.glob("Profile*/Cookies"))
+    if not cookie_files:
+        console.print("[red]登录状态无效，请先运行:[/red]")
+        console.print("[dim]  glm-coding-bot login[/dim]")
+        return
+
+    with Status("[blue]检查登录状态...", console=console):
+        session_result = await _verify_login_session(config.user_data_dir)
+    if session_result.status == "error":
+        console.print("[red]登录状态校验失败，请稍后重试[/red]")
+        console.print(f"[dim]  {session_result.detail}[/dim]")
+        return
+    if session_result.status != "valid":
+        console.print("[red]登录状态无效，请先运行:[/red]")
+        console.print("[dim]  glm-coding-bot login[/dim]")
+        return
+
+    console.print(f"[green]使用浏览器登录数据: {config.user_data_dir}[/green]")
 
     with Status("[blue]同步NTP时间...", console=console):
-        sync_success = await sync_time()
-    if sync_success:
-        console.print("[green]时间同步成功[/green]")
+        time_sync_result = await TimeSync().sync()
+    ntp_offset_ms = time_sync_result.offset_ms if time_sync_result.success else 0.0
+    if time_sync_result.success:
+        console.print(f"[green]时间同步成功 (偏移 {ntp_offset_ms:+.0f}ms)[/green]")
     else:
         console.print("[yellow]时间同步失败，使用本地时间[/yellow]")
 
@@ -261,7 +397,8 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
     console.print(f"[green]目标产品: {product_id}[/green]")
 
     if not now:
-        now_dt = datetime.now()
+        # 使用 NTP 偏移修正当前时间，减少本机时钟误差造成的抢购偏移
+        now_dt = datetime.now() + timedelta(milliseconds=ntp_offset_ms)
         target = datetime.strptime(target_time, "%H:%M:%S")
         target = now_dt.replace(hour=target.hour, minute=target.minute, second=target.second)
 
@@ -289,28 +426,32 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
         else:
             console.print("[yellow]目标时间已过，立即开始[/yellow]")
 
-    console.print("\n" + "=" * 60)
-    console.print("[bold cyan]阶段1: 高频库存检测[/bold cyan]")
-    console.print("=" * 60)
-
-    monitor = StockMonitor(product_id=product_id, poll_interval=0.02)
-
-    found = await monitor.wait_for_stock(timeout=60.0)
-    if not found:
-        console.print("[red]未检测到库存，抢购结束[/red]")
-        return
-
-    console.print("\n" + "=" * 60)
-    console.print("[bold cyan]阶段2: 浏览器执行购买[/bold cyan]")
-    console.print("=" * 60)
-
     bot = BrowserController(headless=headless)
 
     try:
+        console.print("\n" + "=" * 60)
+        console.print("[bold cyan]阶段1: 浏览器预热[/bold cyan]")
+        console.print("=" * 60)
         await bot.init()
-        await bot.navigate_to_purchase()
+        nav_ok = await bot.navigate_to_purchase()
+        if not nav_ok:
+            console.print("[red]浏览器预热失败，抢购结束[/red]")
+            return
 
-        clicked = await bot.click_buy_button(package)
+        console.print("\n" + "=" * 60)
+        console.print("[bold cyan]阶段2: 高频库存检测[/bold cyan]")
+        console.print("=" * 60)
+        monitor = StockMonitor(product_id=product_id, poll_interval=0.02)
+        found = await monitor.wait_for_stock(timeout=60.0)
+        if not found:
+            console.print("[red]未检测到库存，抢购结束[/red]")
+            return
+
+        console.print("\n" + "=" * 60)
+        console.print("[bold cyan]阶段3: 快速执行购买[/bold cyan]")
+        console.print("=" * 60)
+
+        clicked = await bot.click_buy_button(package, period)
         if not clicked:
             console.print("[red]点击购买按钮失败[/red]")
             return

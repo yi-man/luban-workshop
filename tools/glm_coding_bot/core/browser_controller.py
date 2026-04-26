@@ -4,12 +4,10 @@
 """
 
 import asyncio
-import json
 import time
-from pathlib import Path
 from typing import Optional
 
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright.async_api import async_playwright, BrowserContext, Page
 from rich.console import Console
 from rich.panel import Panel
 
@@ -39,14 +37,15 @@ class BrowserController:
     ):
         config = get_config()
 
-        self.cookies_file = cookies_file or str(config.cookies_file)
         self.headless = headless
         self.width = width
         self.height = height
         self.base_url = config.base_url
+        # Backward-compatible legacy kwarg. Persistent browser profiles
+        # replace JSON cookie injection, but callers may still pass this.
+        self.cookies_file = cookies_file
 
         self._playwright = None
-        self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
         self._initialized = False
@@ -68,47 +67,20 @@ class BrowserController:
         try:
             self._playwright = await async_playwright().start()
 
-            self._browser = await self._playwright.chromium.launch(
+            config = get_config()
+            user_data_dir = config.user_data_dir
+            user_data_dir.mkdir(parents=True, exist_ok=True)
+
+            self._context = await self._playwright.chromium.launch_persistent_context(
+                str(user_data_dir),
                 headless=self.headless,
+                viewport={"width": self.width, "height": self.height},
                 args=[
                     "--disable-blink-features=AutomationControlled",
                 ],
             )
 
-            context_options: dict = {
-                "viewport": {"width": self.width, "height": self.height},
-            }
-
-            cookies_path = Path(self.cookies_file)
-            if cookies_path.exists():
-                with open(cookies_path) as f:
-                    cookies_data = json.load(f)
-                    cookies = []
-                    for c in cookies_data:
-                        if not c.get("name") or not c.get("value"):
-                            continue
-                        cookie = {
-                            "name": c["name"],
-                            "value": c["value"],
-                            "domain": c.get("domain", ".bigmodel.cn"),
-                            "path": c.get("path", "/"),
-                        }
-                        if c.get("expires"):
-                            cookie["expires"] = c["expires"]
-                        if c.get("secure") is not None:
-                            cookie["secure"] = c["secure"]
-                        if c.get("httpOnly") is not None:
-                            cookie["httpOnly"] = c["httpOnly"]
-                        if c.get("sameSite"):
-                            cookie["sameSite"] = c["sameSite"]
-                        cookies.append(cookie)
-                    context_options["cookies"] = cookies
-                    console.print(f"[green]已加载 {len(cookies)} 个cookies[/green]")
-            else:
-                console.print("[yellow]未找到cookies文件[/yellow]")
-
-            self._context = await self._browser.new_context(**context_options)
-            self._page = await self._context.new_page()
+            self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
 
             self._initialized = True
             console.print("[green]浏览器初始化完成[/green]")
@@ -141,14 +113,40 @@ class BrowserController:
             self.stats["error_count"] += 1
             return False
 
-    async def click_buy_button(self, package: str = "Max") -> bool:
+    async def _select_period_tab(self, period: str) -> bool:
+        """选择订阅周期 tab，确保点击的是目标周期。"""
+        if not self._page:
+            return False
+
+        period_keywords = {
+            "monthly": ["连续包月", "包月", "monthly", "月"],
+            "quarterly": ["连续包季", "包季", "quarterly", "季"],
+            "yearly": ["连续包年", "包年", "yearly", "年"],
+        }
+        keywords = period_keywords.get(period, [])
+        if not keywords:
+            console.print(f"[red]无效周期类型: {period}[/red]")
+            return False
+
+        for keyword in keywords:
+            locator = self._page.locator(f"text={keyword}")
+            if await locator.count():
+                try:
+                    await locator.first.click(timeout=2000)
+                    await asyncio.sleep(0.2)
+                    return True
+                except Exception:
+                    continue
+        return False
+
+    async def click_buy_button(self, package: str = "Max", period: str = "quarterly") -> bool:
         """点击购买按钮"""
         if not self._page:
             console.print("[red]页面未加载[/red]")
             return False
 
         try:
-            console.print(f"[blue]点击 {package} 套餐购买按钮...[/blue]")
+            console.print(f"[blue]点击 {package} 套餐购买按钮（{period}）...[/blue]")
 
             button_map = {"Lite": 0, "Pro": 1, "Max": 2}
             index = button_map.get(package)
@@ -157,8 +155,14 @@ class BrowserController:
                 console.print(f"[red]无效套餐类型: {package}[/red]")
                 return False
 
+            period_selected = await self._select_period_tab(period)
+            if not period_selected:
+                console.print("[yellow]未找到周期标签，继续尝试直接点击购买按钮[/yellow]")
+
             buttons = await self._page.query_selector_all(".buy-btn")
             if len(buttons) > index:
+                await buttons[index].scroll_into_view_if_needed()
+                await asyncio.sleep(0.1)
                 await buttons[index].click()
                 self.stats["click_count"] += 1
                 console.print("[green]购买按钮已点击[/green]")
@@ -208,8 +212,8 @@ class BrowserController:
 
     async def close(self):
         """关闭浏览器"""
-        if self._browser:
-            await self._browser.close()
+        if self._context:
+            await self._context.close()
             console.print("[dim]浏览器已关闭[/dim]")
 
     async def __aenter__(self):
@@ -220,10 +224,10 @@ class BrowserController:
         await self.close()
 
 
-async def quick_buy(package: str = "Max", cookies_file: str = "cookies.json"):
+async def quick_buy(package: str = "Max", cookies_file: Optional[str] = None):
     """快速购买函数"""
     async with BrowserController(cookies_file=cookies_file) as bot:
         if await bot.navigate_to_purchase():
-            await bot.click_buy_button(package)
+            await bot.click_buy_button(package, "quarterly")
             await bot.wait_for_captcha(timeout=10)
             await asyncio.sleep(30)

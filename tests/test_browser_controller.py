@@ -165,6 +165,7 @@ async def test_attempt_recover_only_repositions_existing_page(controller):
     recovered = await controller.attempt_recover("Max", "quarterly")
 
     assert recovered is True
+    controller._page.evaluate.assert_awaited_once_with("() => window.scrollTo(0, 800)")
     controller.navigate_to_purchase.assert_not_awaited()
 
 

@@ -31,19 +31,18 @@ class PurchaseCoordinator:
         self.session = PurchaseSession()
 
     async def run(self) -> PurchaseResult:
+        self.session = PurchaseSession()
         self.session.phase = "WARMING"
         page_state = await self.page_controller.refresh_page_state(self.package, self.period)
         if not page_state.warm_ready:
-            self.session.phase = "FAILED"
-            self.session.failure_reason = "warmup-not-ready"
-            return PurchaseResult(False, "FAILED", "warmup-not-ready")
+            return self._fail("warmup-not-ready")
 
         self.session.phase = "STOCK_PENDING_CONFIRM"
         signal = await self.signal_monitor.confirm_hit()
         if not signal.confirmed:
-            self.session.phase = "FAILED"
-            self.session.failure_reason = "stock-unconfirmed"
-            return PurchaseResult(False, "FAILED", "stock-unconfirmed")
+            return self._fail("stock-unconfirmed")
+        if signal.product_id != self.product_id:
+            return self._fail("stock-product-mismatch")
 
         self.session.phase = "COMMIT_READY"
         page_state = await self.page_controller.refresh_page_state(self.package, self.period)
@@ -51,23 +50,22 @@ class PurchaseCoordinator:
             self.session.phase = "RECOVERING"
             self.session.recovery_used = True
             if not await self.page_controller.attempt_recover(self.package, self.period):
-                self.session.phase = "FAILED"
-                self.session.failure_reason = "recovery-failed"
-                return PurchaseResult(False, "FAILED", "recovery-failed")
+                return self._fail("recovery-failed")
             page_state = await self.page_controller.refresh_page_state(self.package, self.period)
             if not page_state.hot_ready:
-                self.session.phase = "FAILED"
-                self.session.failure_reason = "not-hot-ready"
-                return PurchaseResult(False, "FAILED", "not-hot-ready")
+                return self._fail("not-hot-ready")
 
         self.session.phase = "COMMITTING"
         self.session.commit_started = True
         clicked = await self.page_controller.click_purchase(self.package, self.period)
         if not clicked:
-            self.session.phase = "FAILED"
-            self.session.failure_reason = "click-failed"
-            return PurchaseResult(False, "FAILED", "click-failed")
+            return self._fail("click-failed")
 
         self.session.commit_completed = True
         self.session.phase = "COMPLETED"
         return PurchaseResult(True, "COMPLETED", timing_metrics=self.session.timing_metrics)
+
+    def _fail(self, reason: str) -> PurchaseResult:
+        self.session.phase = "FAILED"
+        self.session.failure_reason = reason
+        return PurchaseResult(False, "FAILED", reason)

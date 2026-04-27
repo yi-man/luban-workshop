@@ -24,7 +24,8 @@ from rich.status import Status
 
 from tools.glm_coding_bot.config import get_config
 from tools.glm_coding_bot.core.browser_controller import BrowserController
-from tools.glm_coding_bot.core.stock_monitor import StockMonitor
+from tools.glm_coding_bot.core.purchase_coordinator import PurchaseCoordinator
+from tools.glm_coding_bot.core.stock_monitor import StockMonitor, StockSignalMonitor
 from tools.glm_coding_bot.product_mapping import (
     SubscriptionPeriod,
     get_product_id,
@@ -439,24 +440,23 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
             return
 
         console.print("\n" + "=" * 60)
-        console.print("[bold cyan]阶段2: 高频库存检测[/bold cyan]")
-        console.print("=" * 60)
-        monitor = StockMonitor(product_id=product_id, poll_interval=0.02)
-        found = await monitor.wait_for_stock(timeout=60.0)
-        if not found:
-            console.print("[red]未检测到库存，抢购结束[/red]")
-            return
-
-        console.print("\n" + "=" * 60)
-        console.print("[bold cyan]阶段3: 快速执行购买[/bold cyan]")
+        console.print("[bold cyan]阶段2: 协调库存与提交流程[/bold cyan]")
         console.print("=" * 60)
 
-        clicked = await bot.click_buy_button(package, period)
-        if not clicked:
-            console.print("[red]点击购买按钮失败[/red]")
+        signal_monitor = StockSignalMonitor(product_id=product_id, poll_interval=0.02)
+        coordinator = PurchaseCoordinator(
+            package=package,
+            period=period,
+            product_id=product_id,
+            page_controller=bot,
+            signal_monitor=signal_monitor,
+        )
+        result = await coordinator.run()
+        if not result.success:
+            console.print(f"[red]抢购失败: {result.failure_reason}[/red]")
             return
 
-        console.print("\n[bold yellow]处理验证码...[/bold yellow]")
+        console.print("[green]购买点击已提交，进入验证码阶段[/green]")
         success = await bot.handle_captcha(timeout=15.0)
 
         if success:

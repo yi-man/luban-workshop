@@ -54,6 +54,17 @@ def _extract_business_signal(result_data: dict | None) -> tuple[bool, int | None
     return False, parsed_tokens, parsed_times
 
 
+def _extract_product_id(result_data: dict | None, fallback_product_id: str) -> str:
+    if not isinstance(result_data, dict):
+        return fallback_product_id
+
+    product_id = result_data.get("productId")
+    if isinstance(product_id, str) and product_id:
+        return product_id
+
+    return fallback_product_id
+
+
 class StockMonitor:
     """库存监控器
 
@@ -122,9 +133,10 @@ class StockMonitor:
 
             result_data = data.get("data")
             available, tokens, times = _extract_business_signal(result_data)
+            product_id = _extract_product_id(result_data, self.product_id)
 
             return StockInfo(
-                product_id=self.product_id,
+                product_id=product_id,
                 available=available,
                 tokens=tokens,
                 times=times,
@@ -219,7 +231,7 @@ class StockSignalMonitor:
     async def _confirm_hit_with_session(self, session: aiohttp.ClientSession) -> StockSignal:
         first = await self.check_once(session=session)
         signal = StockSignal(
-            product_id=self.product_id,
+            product_id=first.product_id,
             raw_hit=first.available,
             confidence=1 if first.available else 0,
             first_hit_at=first.timestamp if first.available else None,
@@ -230,6 +242,7 @@ class StockSignalMonitor:
 
         await asyncio.sleep(self.poll_interval)
         second = await self.check_once(session=session)
+        signal.product_id = second.product_id
         signal.last_raw_response = second.raw_data
         if second.available:
             signal.confirmed = True

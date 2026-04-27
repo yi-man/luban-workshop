@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools.glm_coding_bot.core.browser_controller import PageState
 from tools.glm_coding_bot.core.purchase_coordinator import PurchaseCoordinator
-from tools.glm_coding_bot.core.stock_monitor import StockSignal
+from tools.glm_coding_bot.core.stock_monitor import StockInfo, StockSignal, StockSignalMonitor
 
 
 def make_signal(*, confirmed: bool = True, product_id: str = "product-test-123") -> StockSignal:
@@ -99,6 +99,41 @@ async def test_run_does_not_commit_when_signal_product_mismatches():
 
 
 @pytest.mark.asyncio
+async def test_run_does_not_commit_when_real_signal_path_product_mismatches(monkeypatch):
+    signal_monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0)
+    responses = [
+        StockInfo(product_id="product-api-999", available=True, raw_data={"data": {"magnitude": 1}}, timestamp=100.0),
+        StockInfo(product_id="product-api-999", available=True, raw_data={"data": {"magnitude": 2}}, timestamp=101.0),
+    ]
+
+    async def fake_check_once(session=None):
+        return responses.pop(0)
+
+    monkeypatch.setattr(signal_monitor, "check_once", fake_check_once)
+
+    page_controller = AsyncMock()
+    page_controller.refresh_page_state = AsyncMock(
+        side_effect=[PageState(warm_ready=True, hot_ready=True)]
+    )
+    page_controller.attempt_recover = AsyncMock(return_value=True)
+    page_controller.click_purchase = AsyncMock(return_value=True)
+
+    coordinator = PurchaseCoordinator(
+        package="Max",
+        period="quarterly",
+        product_id="product-test-123",
+        page_controller=page_controller,
+        signal_monitor=signal_monitor,
+    )
+
+    result = await coordinator.run()
+
+    assert result.success is False
+    assert result.failure_reason == "stock-product-mismatch"
+    page_controller.click_purchase.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_run_commits_when_stock_and_page_ready():
     coordinator, page_controller, _ = make_coordinator(
         page_states=[
@@ -158,6 +193,30 @@ async def test_run_uses_single_recovery_before_fail():
     assert result.failure_reason == "recovery-failed"
     assert coordinator.session.phase == "FAILED"
     assert coordinator.session.failure_reason == "recovery-failed"
+    assert coordinator.session.commit_started is False
+    assert coordinator.session.commit_completed is False
+    assert coordinator.session.recovery_used is True
+    page_controller.attempt_recover.assert_awaited_once_with("Max", "quarterly")
+    page_controller.click_purchase.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_returns_not_hot_ready_when_recovery_recheck_still_fails():
+    coordinator, page_controller, _ = make_coordinator(
+        page_states=[
+            PageState(warm_ready=True, hot_ready=False),
+            PageState(warm_ready=True, hot_ready=False),
+            PageState(warm_ready=True, hot_ready=False),
+        ],
+        attempt_recover=True,
+    )
+
+    result = await coordinator.run()
+
+    assert result.success is False
+    assert result.failure_reason == "not-hot-ready"
+    assert coordinator.session.phase == "FAILED"
+    assert coordinator.session.failure_reason == "not-hot-ready"
     assert coordinator.session.commit_started is False
     assert coordinator.session.commit_completed is False
     assert coordinator.session.recovery_used is True

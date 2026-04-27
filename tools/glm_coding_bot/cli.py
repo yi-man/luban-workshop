@@ -428,6 +428,7 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
             console.print("[yellow]目标时间已过，立即开始[/yellow]")
 
     bot = BrowserController(headless=headless)
+    keep_browser_open = False
 
     try:
         console.print("\n" + "=" * 60)
@@ -456,6 +457,7 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
             console.print(f"[red]抢购失败: {result.failure_reason}[/red]")
             return
 
+        keep_browser_open = True
         console.print("[green]购买点击已提交，进入验证码阶段[/green]")
         success = await bot.handle_captcha(timeout=15.0)
 
@@ -477,8 +479,9 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
         console.print(f"[dim]  点击: {stats['click_count']}次[/dim]")
         console.print(f"[dim]  错误: {stats['error_count']}次[/dim]")
 
-        console.print("\n[dim]10秒后关闭浏览器...[/dim]")
-        await asyncio.sleep(10)
+        if keep_browser_open:
+            console.print("\n[dim]10秒后关闭浏览器...[/dim]")
+            await asyncio.sleep(10)
         await bot.close()
 
 

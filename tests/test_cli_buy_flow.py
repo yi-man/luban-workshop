@@ -65,12 +65,14 @@ async def test_buy_uses_coordinator_after_preflight(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, "PurchaseCoordinator", lambda **kwargs: coordinator)
     monkeypatch.setattr(cli_module, "BrowserController", lambda **kwargs: page_controller)
     monkeypatch.setattr(cli_module, "Status", DummyStatus)
-    monkeypatch.setattr(cli_module.asyncio, "sleep", AsyncMock(return_value=None))
+    sleep = AsyncMock(return_value=None)
+    monkeypatch.setattr(cli_module.asyncio, "sleep", sleep)
 
     await cli_module._buy("Max", "quarterly", "10:00:00", headless=False, now=True)
 
     coordinator.run.assert_awaited_once()
     page_controller.handle_captcha.assert_awaited_once_with(timeout=15.0)
+    sleep.assert_awaited_once_with(10)
 
 
 @pytest.mark.asyncio
@@ -105,7 +107,8 @@ async def test_buy_stops_when_coordinator_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, "PurchaseCoordinator", lambda **kwargs: coordinator)
     monkeypatch.setattr(cli_module, "BrowserController", lambda **kwargs: page_controller)
     monkeypatch.setattr(cli_module, "Status", DummyStatus)
-    monkeypatch.setattr(cli_module.asyncio, "sleep", AsyncMock(return_value=None))
+    sleep = AsyncMock(return_value=None)
+    monkeypatch.setattr(cli_module.asyncio, "sleep", sleep)
     monkeypatch.setattr(
         cli_module.console,
         "print",
@@ -116,4 +119,5 @@ async def test_buy_stops_when_coordinator_fails(monkeypatch, tmp_path):
 
     coordinator.run.assert_awaited_once()
     page_controller.handle_captcha.assert_not_awaited()
+    sleep.assert_not_awaited()
     assert any("抢购失败: stock-unconfirmed" in message for message in messages)

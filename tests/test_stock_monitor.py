@@ -264,6 +264,41 @@ async def test_signal_monitor_confirm_hit_preserves_api_product_id():
 
 
 @pytest.mark.asyncio
+async def test_signal_monitor_does_not_confirm_when_product_id_changes_between_hits():
+    monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
+    first_payload = {
+        "code": 200,
+        "data": {"magnitude": 1, "productId": "product-api-111"},
+    }
+    second_payload = {
+        "code": 200,
+        "data": {"magnitude": 2, "productId": "product-api-222"},
+    }
+    responses = [
+        _make_mock_response(status=200, json_data=first_payload),
+        _make_mock_response(status=200, json_data=second_payload),
+    ]
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=responses)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+    client_session_factory = MagicMock(return_value=mock_session)
+    sleep_mock = AsyncMock()
+
+    with patch("tools.glm_coding_bot.core.stock_monitor.aiohttp.ClientSession", client_session_factory):
+        with patch("tools.glm_coding_bot.core.stock_monitor.asyncio.sleep", sleep_mock):
+            signal = await monitor.confirm_hit()
+
+    assert signal.raw_hit is True
+    assert signal.confirmed is False
+    assert signal.confidence == 1
+    assert signal.confirmed_at is None
+    assert signal.product_id == "product-api-222"
+    assert signal.last_raw_response == second_payload
+    sleep_mock.assert_awaited_once_with(0.02)
+
+
+@pytest.mark.asyncio
 async def test_signal_monitor_confirm_hit_uses_configured_external_session():
     monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
     first_payload = {

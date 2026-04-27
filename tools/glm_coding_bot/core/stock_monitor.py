@@ -244,7 +244,7 @@ class StockSignalMonitor:
         second = await self.check_once(session=session)
         signal.product_id = second.product_id
         signal.last_raw_response = second.raw_data
-        if second.available:
+        if second.available and second.product_id == first.product_id:
             signal.confirmed = True
             signal.confidence = 2
             signal.confirmed_at = second.timestamp

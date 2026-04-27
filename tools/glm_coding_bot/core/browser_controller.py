@@ -7,6 +7,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, BrowserContext, Page
 from rich.console import Console
@@ -202,7 +203,13 @@ class BrowserController:
         page_url = getattr(self._page, "url", "") or ""
 
         state.session_ok = not await self._has_login_prompt()
-        state.route_ok = self.base_url in page_url
+        parsed_url = urlparse(page_url)
+        expected_url = urlparse(self.base_url)
+        state.route_ok = (
+            parsed_url.scheme == expected_url.scheme
+            and parsed_url.netloc == expected_url.netloc
+            and parsed_url.path.rstrip("/") == "/glm-coding"
+        )
         state.period_ok = await self._is_period_tab_ready(period)
         button = await self._resolve_buy_button(package)
         state.button_present = button is not None

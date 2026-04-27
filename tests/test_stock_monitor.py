@@ -336,6 +336,33 @@ async def test_signal_monitor_confirm_hit_uses_configured_external_session():
     sleep_mock.assert_awaited_once_with(0.02)
 
 
+@pytest.mark.asyncio
+async def test_signal_monitor_waits_until_later_confirmed_hit(monkeypatch):
+    monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0)
+    responses = [
+        StockInfo(product_id="product-test-123", available=False, raw_data={"data": {}}, timestamp=100.0),
+        StockInfo(product_id="product-test-123", available=False, raw_data={"data": {}}, timestamp=101.0),
+        StockInfo(product_id="product-test-123", available=True, raw_data={"data": {"magnitude": 1}}, timestamp=102.0),
+        StockInfo(product_id="product-test-123", available=True, raw_data={"data": {"magnitude": 2}}, timestamp=103.0),
+    ]
+    calls = 0
+
+    async def fake_check_once(session=None):
+        nonlocal calls
+        calls += 1
+        return responses.pop(0)
+
+    monkeypatch.setattr(monitor, "check_once", fake_check_once)
+
+    signal = await monitor.wait_for_confirmed_hit(timeout=0.1)
+
+    assert signal.confirmed is True
+    assert signal.product_id == "product-test-123"
+    assert signal.first_hit_at == 102.0
+    assert signal.confirmed_at == 103.0
+    assert calls == 4
+
+
 class TestStockMonitor:
     """StockMonitor测试类"""
 

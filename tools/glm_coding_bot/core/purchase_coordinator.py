@@ -22,12 +22,21 @@ class PurchaseResult:
 
 
 class PurchaseCoordinator:
-    def __init__(self, package: str, period: str, product_id: str, page_controller, signal_monitor):
+    def __init__(
+        self,
+        package: str,
+        period: str,
+        product_id: str,
+        page_controller,
+        signal_monitor,
+        stock_timeout: float = 60.0,
+    ):
         self.package = package
         self.period = period
         self.product_id = product_id
         self.page_controller = page_controller
         self.signal_monitor = signal_monitor
+        self.stock_timeout = stock_timeout
         self.session = PurchaseSession()
 
     async def run(self) -> PurchaseResult:
@@ -38,7 +47,7 @@ class PurchaseCoordinator:
             return self._fail("warmup-not-ready")
 
         self.session.phase = "STOCK_PENDING_CONFIRM"
-        signal = await self.signal_monitor.confirm_hit()
+        signal = await self.signal_monitor.wait_for_confirmed_hit(timeout=self.stock_timeout)
         if not signal.confirmed:
             return self._fail("stock-unconfirmed")
         if signal.product_id != self.product_id:

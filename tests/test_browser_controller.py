@@ -159,6 +159,54 @@ async def test_get_page_state_reports_hot_ready_when_button_clickable(controller
 
 
 @pytest.mark.asyncio
+async def test_get_page_state_requires_glm_coding_route(controller):
+    mock_page = AsyncMock()
+    mock_page.url = f"{controller.base_url}/dashboard"
+    mock_page.viewport_size = {"width": controller.width, "height": controller.height}
+    controller._page = mock_page
+    controller._initialized = True
+    controller._is_period_tab_ready = AsyncMock(return_value=True)
+    controller._has_login_prompt = AsyncMock(return_value=False)
+    controller._has_blocking_overlay = AsyncMock(return_value=False)
+
+    mock_button = AsyncMock()
+    mock_button.is_visible = AsyncMock(return_value=True)
+    mock_button.is_enabled = AsyncMock(return_value=True)
+    mock_button.bounding_box = AsyncMock(return_value={"x": 100, "y": 250, "width": 180, "height": 48})
+    mock_page.query_selector_all = AsyncMock(return_value=[mock_button, mock_button, mock_button])
+
+    state = await controller.refresh_page_state("Max", "quarterly")
+
+    assert state.route_ok is False
+    assert state.warm_ready is False
+    assert state.hot_ready is False
+
+
+@pytest.mark.asyncio
+async def test_get_page_state_requires_expected_origin(controller):
+    mock_page = AsyncMock()
+    mock_page.url = "https://example.com/glm-coding"
+    mock_page.viewport_size = {"width": controller.width, "height": controller.height}
+    controller._page = mock_page
+    controller._initialized = True
+    controller._is_period_tab_ready = AsyncMock(return_value=True)
+    controller._has_login_prompt = AsyncMock(return_value=False)
+    controller._has_blocking_overlay = AsyncMock(return_value=False)
+
+    mock_button = AsyncMock()
+    mock_button.is_visible = AsyncMock(return_value=True)
+    mock_button.is_enabled = AsyncMock(return_value=True)
+    mock_button.bounding_box = AsyncMock(return_value={"x": 100, "y": 250, "width": 180, "height": 48})
+    mock_page.query_selector_all = AsyncMock(return_value=[mock_button, mock_button, mock_button])
+
+    state = await controller.refresh_page_state("Max", "quarterly")
+
+    assert state.route_ok is False
+    assert state.warm_ready is False
+    assert state.hot_ready is False
+
+
+@pytest.mark.asyncio
 async def test_is_period_tab_ready_requires_selected_state(controller):
     controller._page = Mock()
     mock_locator = AsyncMock()

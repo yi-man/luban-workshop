@@ -228,6 +228,34 @@ class StockSignalMonitor:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             return await self._confirm_hit_with_session(session)
 
+    async def wait_for_confirmed_hit(self, timeout: Optional[float] = None) -> StockSignal:
+        timeout = self.monitor.max_poll_duration if timeout is None else timeout
+        external_session = self.monitor.session
+        if external_session is not None:
+            return await self._wait_for_confirmed_hit_with_session(timeout, external_session)
+
+        timeout_obj = aiohttp.ClientTimeout(total=self.monitor.api_timeout)
+        async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+            return await self._wait_for_confirmed_hit_with_session(timeout, session)
+
+    async def _wait_for_confirmed_hit_with_session(
+        self,
+        timeout: float,
+        session: aiohttp.ClientSession,
+    ) -> StockSignal:
+        loop = asyncio.get_event_loop()
+        start_time = loop.time()
+        last_signal = StockSignal(product_id=self.product_id)
+
+        while (loop.time() - start_time) < timeout and not self.monitor._should_stop:
+            signal = await self._confirm_hit_with_session(session)
+            last_signal = signal
+            if signal.confirmed:
+                return signal
+            await asyncio.sleep(self.poll_interval)
+
+        return last_signal
+
     async def _confirm_hit_with_session(self, session: aiohttp.ClientSession) -> StockSignal:
         first = await self.check_once(session=session)
         signal = StockSignal(

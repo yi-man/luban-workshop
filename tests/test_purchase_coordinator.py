@@ -37,6 +37,7 @@ def make_coordinator(
 
     signal_monitor = AsyncMock()
     signal_monitor.confirm_hit = AsyncMock(return_value=signal or make_signal())
+    signal_monitor.wait_for_confirmed_hit = AsyncMock(return_value=signal or make_signal())
 
     coordinator = PurchaseCoordinator(
         package="Max",
@@ -79,7 +80,8 @@ async def test_run_does_not_commit_when_stock_unconfirmed():
     assert result.success is False
     assert result.failure_reason == "stock-unconfirmed"
     assert coordinator.session.failure_reason == "stock-unconfirmed"
-    signal_monitor.confirm_hit.assert_awaited_once()
+    signal_monitor.wait_for_confirmed_hit.assert_awaited_once_with(timeout=60.0)
+    signal_monitor.confirm_hit.assert_not_awaited()
     page_controller.click_purchase.assert_not_awaited()
 
 
@@ -131,6 +133,23 @@ async def test_run_does_not_commit_when_real_signal_path_product_mismatches(monk
     assert result.success is False
     assert result.failure_reason == "stock-product-mismatch"
     page_controller.click_purchase.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_uses_sustained_stock_wait_before_commit():
+    coordinator, page_controller, signal_monitor = make_coordinator(
+        page_states=[
+            PageState(warm_ready=True, hot_ready=True),
+            PageState(warm_ready=True, hot_ready=True),
+        ],
+    )
+
+    result = await coordinator.run()
+
+    assert result.success is True
+    signal_monitor.wait_for_confirmed_hit.assert_awaited_once_with(timeout=60.0)
+    signal_monitor.confirm_hit.assert_not_awaited()
+    page_controller.click_purchase.assert_awaited_once_with("Max", "quarterly")
 
 
 @pytest.mark.asyncio

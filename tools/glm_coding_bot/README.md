@@ -67,7 +67,7 @@ uv run python -m tools.glm_coding_bot test
 ## 流程
 
 1. **预热浏览器**：开售前提前启动有头浏览器、恢复登录态、进入购买页并完成预热/就绪检查
-2. **库存确认**：API 高频轮询检测候选命中，并在 20ms 后做一次确认轮询
+2. **库存确认**：API 高频轮询持续等待库存信号，并在每次候选命中后于 20ms 后再确认一次
 3. **提交点击**：只有在 `stock_confirmed` 与 `hot_ready` 同时成立时才点击购买
 4. **短恢复**：若库存确认时页面暂不可点，仅允许一次轻量恢复尝试
 5. **验证码处理**：点击提交后继续在同一浏览器会话中处理验证码
@@ -84,13 +84,14 @@ uv run python -m tools.glm_coding_bot test
 
 ```
 tools/glm_coding_bot/
-├── cli.py                  # CLI 命令（login, buy, monitor, test）
+├── cli.py                  # CLI 命令（login, check-login, buy, monitor, test）
 ├── config.py               # 配置管理
 ├── product_mapping.py      # 产品 ID 映射
 ├── product.json            # API 原始产品数据
 ├── core/
 │   ├── stock_monitor.py    # 高频库存监控
 │   ├── browser_controller.py  # 浏览器自动化
+│   ├── purchase_coordinator.py  # 库存与页面提交协调
 │   └── captcha_solver.py   # 滑块验证码识别
 └── utils/
     ├── logger.py           # 日志

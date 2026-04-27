@@ -9,13 +9,14 @@ luban-workshop/
 ├── tools/                    # Executable tools directory
 │   ├── png2Icons/            # PNG to ICO/ICNS converter
 │   ├── remove_watermark/     # Watermark removal tool
-│   ├── video_download/        # Multi-platform video downloader
-│   └── video_transcribe/     # Video to text transcription
+│   ├── video_download/       # Multi-platform video downloader
+│   ├── video_transcribe/     # Video to text transcription
+│   └── glm_coding_bot/       # GLM Coding Plan 抢购工具
 ├── tests/                    # Unit tests
+├── examples/                 # Usage examples
 ├── AGENTS.md                 # Agent/tool instructions (source)
 ├── CLAUDE.md -> AGENTS.md    # Symlink for Claude/Cursor compatibility
 ├── README.md                 # Detailed documentation
-├── main.py                   # Main entry point
 └── pyproject.toml            # Project configuration
 ```
 
@@ -124,6 +125,45 @@ uv run remove_watermark <input_image>
 - Preserves background using inpainting
 - Generates output image with `_no_watermark` suffix
 
+### glm-coding-bot
+
+GLM Coding Plan 抢购工具 — API 高频轮询检测库存 + 浏览器自动化购买 + 滑块验证码识别。
+
+**安装浏览器（首次使用）：**
+
+```bash
+playwright install chromium
+```
+
+**使用：**
+
+```bash
+# 1. 登录（首次使用）
+uv run glm-coding-bot login --phone 13800138000
+
+# 2. 抢购
+uv run glm-coding-bot buy                                    # 默认 Max 套餐 / 包季 / 10:00:00
+uv run glm-coding-bot buy --package Pro --period monthly     # 自定义套餐和周期
+uv run glm-coding-bot buy --now                              # 立即执行
+uv run glm-coding-bot buy --headless                         # 无头模式
+
+# 3. 仅监控库存
+uv run glm-coding-bot monitor --duration 120
+
+# 4. 功能测试
+uv run glm-coding-bot test
+```
+
+| 参数 | 说明 | 可选值 |
+|------|------|--------|
+| `--package` | 套餐类型 | `Lite`, `Pro`, `Max` |
+| `--period` | 订阅周期 | `monthly`, `quarterly`, `yearly` |
+| `--time` | 抢购时间 | `HH:MM:SS` |
+| `--headless` | 无头模式 | flag |
+| `--now` | 立即执行 | flag |
+
+**Detailed documentation:** See [tools/glm_coding_bot/README.md](tools/glm_coding_bot/README.md)
+
 ## Developer Workflow
 
 Install dependencies:
@@ -144,6 +184,7 @@ Tool entrypoint mapping:
 - `video_download` -> `tools.video_download.main:main`
 - `video_transcribe` -> `tools.video_transcribe.main:main`
 - `remove_watermark` -> `tools.remove_watermark.main:main`
+- `glm-coding-bot` -> `tools.glm_coding_bot.cli:cli`
 
 ## Installation
 

@@ -6,7 +6,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from typing import Awaitable, Callable, Dict, Optional
 
 import aiohttp
 from rich.console import Console
@@ -25,6 +25,9 @@ class StockInfo:
     available: bool
     tokens: Optional[int] = None
     times: Optional[int] = None
+    sold_out: Optional[bool] = None
+    can_purchase: Optional[bool] = None
+    forbidden: Optional[bool] = None
     raw_data: Optional[Dict] = None
     timestamp: float = 0.0
 
@@ -33,36 +36,45 @@ class StockInfo:
             self.timestamp = time.time()
 
 
-def _extract_business_signal(result_data: dict | None) -> tuple[bool, int | None, int | None]:
+def _extract_bool(value: object) -> bool | None:
+    return value if type(value) is bool else None
+
+
+def _extract_product_state(
+    result_data: dict | None,
+    fallback_product_id: str,
+) -> tuple[str, bool, bool | None, bool | None, bool | None]:
     if not isinstance(result_data, dict):
-        return False, None, None
+        return fallback_product_id, False, None, None, None
 
-    tokens = result_data.get("tokens")
-    times = result_data.get("times")
-    magnitude = result_data.get("magnitude")
+    product_list = result_data.get("productList")
+    if not isinstance(product_list, list):
+        return fallback_product_id, False, None, None, None
 
-    parsed_tokens = tokens if type(tokens) is int else None
-    parsed_times = times if type(times) is int else None
+    matched = None
+    for item in product_list:
+        if not isinstance(item, dict):
+            continue
+        if item.get("productId") == fallback_product_id:
+            matched = item
+            break
 
-    if parsed_tokens is not None and parsed_tokens > 0:
-        return True, parsed_tokens, parsed_times
-    if parsed_times is not None and parsed_times > 0:
-        return True, parsed_tokens, parsed_times
-    if type(magnitude) is int and magnitude > 0:
-        return True, parsed_tokens, parsed_times
+    if matched is None and len(product_list) == 1 and isinstance(product_list[0], dict):
+        matched = product_list[0]
 
-    return False, parsed_tokens, parsed_times
+    if matched is None:
+        return fallback_product_id, False, None, None, None
 
+    product_id = matched.get("productId")
+    if not isinstance(product_id, str) or not product_id:
+        product_id = fallback_product_id
 
-def _extract_product_id(result_data: dict | None, fallback_product_id: str) -> str:
-    if not isinstance(result_data, dict):
-        return fallback_product_id
+    sold_out = _extract_bool(matched.get("soldOut"))
+    can_purchase = _extract_bool(matched.get("canPurchase"))
+    forbidden = _extract_bool(matched.get("forbidden"))
+    available = sold_out is False and forbidden is not True and can_purchase is not False
 
-    product_id = result_data.get("productId")
-    if isinstance(product_id, str) and product_id:
-        return product_id
-
-    return fallback_product_id
+    return product_id, available, sold_out, can_purchase, forbidden
 
 
 class StockMonitor:
@@ -80,6 +92,7 @@ class StockMonitor:
         poll_interval: float = 0.02,
         max_poll_duration: float = 120.0,
         session: Optional[aiohttp.ClientSession] = None,
+        auth_token: Optional[str] = None,
     ):
         config = get_config()
 
@@ -87,6 +100,7 @@ class StockMonitor:
         self.poll_interval = poll_interval
         self.max_poll_duration = max_poll_duration
         self._external_session = session
+        self.auth_token = auth_token
 
         self.base_url = config.base_url
         self.api_timeout = config.api_timeout
@@ -97,8 +111,11 @@ class StockMonitor:
 
     async def check_stock_once(self, session: Optional[aiohttp.ClientSession] = None) -> StockInfo:
         """单次库存检查"""
-        url = f"{self.base_url}/api/biz/customer/getTokenMagnitude"
-        params = {"productId": self.product_id}
+        url = f"{self.base_url}/api/biz/pay/batch-preview"
+        payload = {"invitationCode": ""}
+        headers = {"Content-Type": "application/json;charset=UTF-8"}
+        if self.auth_token:
+            headers["Authorization"] = self.auth_token
 
         s = session or self._external_session
         own_session = s is None
@@ -107,10 +124,10 @@ class StockMonitor:
             if own_session:
                 timeout = aiohttp.ClientTimeout(total=self.api_timeout)
                 async with aiohttp.ClientSession(timeout=timeout) as s:
-                    async with s.get(url, params=params) as resp:
+                    async with s.post(url, json=payload, headers=headers) as resp:
                         return await self._parse_response(resp)
             else:
-                async with s.get(url, params=params) as resp:
+                async with s.post(url, json=payload, headers=headers) as resp:
                     return await self._parse_response(resp)
 
         except asyncio.TimeoutError:
@@ -132,14 +149,17 @@ class StockMonitor:
                 return StockInfo(product_id=self.product_id, available=False, raw_data=data)
 
             result_data = data.get("data")
-            available, tokens, times = _extract_business_signal(result_data)
-            product_id = _extract_product_id(result_data, self.product_id)
+            product_id, available, sold_out, can_purchase, forbidden = _extract_product_state(
+                result_data,
+                self.product_id,
+            )
 
             return StockInfo(
                 product_id=product_id,
                 available=available,
-                tokens=tokens,
-                times=times,
+                sold_out=sold_out,
+                can_purchase=can_purchase,
+                forbidden=forbidden,
                 raw_data=data,
             )
 
@@ -205,8 +225,15 @@ class StockSignal:
 
 
 class StockSignalMonitor:
-    def __init__(self, product_id: str, poll_interval: float = 0.02):
-        self.monitor = StockMonitor(product_id=product_id, poll_interval=poll_interval)
+    def __init__(
+        self,
+        product_id: str,
+        poll_interval: float = 0.02,
+        auth_token: str | None = None,
+        checker: Callable[[], Awaitable[StockInfo]] | None = None,
+    ):
+        self.monitor = StockMonitor(product_id=product_id, poll_interval=poll_interval, auth_token=auth_token)
+        self._checker = checker
 
     @property
     def product_id(self) -> str:
@@ -217,6 +244,8 @@ class StockSignalMonitor:
         return self.monitor.poll_interval
 
     async def check_once(self, session: Optional[aiohttp.ClientSession] = None) -> StockInfo:
+        if self._checker is not None:
+            return await self._checker()
         return await self.monitor.check_stock_once(session=session)
 
     async def confirm_hit(self) -> StockSignal:
@@ -279,8 +308,8 @@ class StockSignalMonitor:
         return signal
 
 
-async def check_stock(product_id: str) -> StockInfo:
-    monitor = StockMonitor(product_id=product_id)
+async def check_stock(product_id: str, auth_token: str | None = None) -> StockInfo:
+    monitor = StockMonitor(product_id=product_id, auth_token=auth_token)
     return await monitor.check_stock_once()
 
 
@@ -288,6 +317,7 @@ async def wait_stock(
     product_id: str,
     timeout: float = 120.0,
     poll_interval: float = 0.02,
+    auth_token: str | None = None,
 ) -> bool:
-    monitor = StockMonitor(product_id=product_id, poll_interval=poll_interval)
+    monitor = StockMonitor(product_id=product_id, poll_interval=poll_interval, auth_token=auth_token)
     return await monitor.wait_for_stock(timeout=timeout)

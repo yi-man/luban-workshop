@@ -25,13 +25,22 @@ class TestIntegration:
         mock_resp.status = 200
         mock_resp.json = AsyncMock(return_value={
             "code": 200,
-            "data": {"magnitude": 100, "productId": "product-test-123"},
+            "data": {
+                "productList": [
+                    {
+                        "productId": "product-test-123",
+                        "soldOut": False,
+                        "canPurchase": True,
+                        "forbidden": False,
+                    }
+                ]
+            },
         })
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=None)
 
         mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
+        mock_session.post = MagicMock(return_value=mock_resp)
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -45,7 +54,7 @@ class TestIntegration:
             assert elapsed < 0.5
             assert stock_info is not None
             assert stock_info.available is True
-            assert stock_info.raw_data["data"]["magnitude"] == 100
+            assert stock_info.sold_out is False
 
     @pytest.mark.asyncio
     async def test_performance_benchmark(self):

@@ -23,6 +23,7 @@ logger = get_logger()
 
 @dataclass
 class PageState:
+    current_url: str = ""
     session_ok: bool = False
     route_ok: bool = False
     period_ok: bool = False
@@ -34,6 +35,55 @@ class PageState:
     hot_ready: bool = False
     last_checked_at: float = 0.0
     last_failure_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class CheckoutPreview:
+    ok: bool
+    sold_out: bool | None = None
+    biz_id: str | None = None
+    cash_amount: float | None = None
+    give_amount: float | None = None
+    third_party_amount: float | None = None
+
+
+@dataclass(frozen=True)
+class CheckoutResult:
+    success: bool
+    phase: str
+    failure_reason: str | None = None
+    preview: CheckoutPreview | None = None
+
+
+def _coerce_amount(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_checkout_preview(payload: dict | None) -> CheckoutPreview:
+    if not isinstance(payload, dict) or payload.get("code") != 200:
+        return CheckoutPreview(ok=False)
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return CheckoutPreview(ok=False)
+
+    sold_out = data.get("soldOut") if type(data.get("soldOut")) is bool else None
+    biz_id = data.get("bizId") if isinstance(data.get("bizId"), str) else None
+    return CheckoutPreview(
+        ok=True,
+        sold_out=sold_out,
+        biz_id=biz_id,
+        cash_amount=_coerce_amount(data.get("cashAmount")),
+        give_amount=_coerce_amount(data.get("giveAmount")),
+        third_party_amount=_coerce_amount(data.get("thirdPartyAmount")),
+    )
 
 
 class BrowserController:
@@ -90,6 +140,7 @@ class BrowserController:
 
             self._context = await self._playwright.chromium.launch_persistent_context(
                 str(user_data_dir),
+                channel=config.browser_channel,
                 headless=self.headless,
                 viewport={"width": self.width, "height": self.height},
                 args=[
@@ -127,6 +178,20 @@ class BrowserController:
 
         except Exception as e:
             console.print(f"[red]导航失败: {e}[/red]")
+            self.stats["error_count"] += 1
+            return False
+
+    async def reload_purchase_page(self, period: str) -> bool:
+        """低频刷新当前购买页，并在刷新后恢复目标周期。"""
+        if not self._page:
+            return False
+
+        try:
+            await self._page.reload(wait_until="domcontentloaded")
+            await asyncio.sleep(0.3)
+            return await self._select_period_tab(period)
+        except Exception:
+            logger.exception("Failed to reload purchase page")
             self.stats["error_count"] += 1
             return False
 
@@ -201,6 +266,7 @@ class BrowserController:
             return state
 
         page_url = getattr(self._page, "url", "") or ""
+        state.current_url = page_url
 
         state.session_ok = not await self._has_login_prompt()
         parsed_url = urlparse(page_url)
@@ -230,6 +296,33 @@ class BrowserController:
         if not state.hot_ready:
             state.last_failure_reason = "not-hot-ready"
         return state
+
+    async def get_auth_token(self) -> str | None:
+        if self._context is not None:
+            try:
+                cookies = await self._context.cookies(self.base_url)
+                for cookie in cookies:
+                    if cookie.get("name") == "bigmodel_token_production":
+                        value = cookie.get("value")
+                        if isinstance(value, str) and value:
+                            return value
+            except Exception:
+                logger.debug("Failed to read auth token from browser cookies", exc_info=True)
+
+        if not self._page:
+            return None
+
+        try:
+            return await self._page.evaluate(
+                """() => {
+                    const prefix = 'bigmodel_token_production=';
+                    const pair = document.cookie.split('; ').find((value) => value.startsWith(prefix));
+                    return pair ? decodeURIComponent(pair.slice(prefix.length)) : null;
+                }"""
+            )
+        except Exception:
+            logger.debug("Failed to read auth token from page cookies", exc_info=True)
+            return None
 
     async def attempt_recover(self, package: str, period: str) -> bool:
         if not self._page:
@@ -380,6 +473,83 @@ class BrowserController:
 
         solver = CaptchaSolver()
         return await solver.solve_slider(self._page, timeout=timeout, manual_fallback=True)
+
+    async def complete_balance_only_checkout(self, timeout: float = 15.0) -> CheckoutResult:
+        """完成仅余额模式的结算判定，不允许进入第三方支付。"""
+        if not self._page:
+            return CheckoutResult(False, "FAILED", "page-missing")
+
+        preview_event = asyncio.Event()
+        pay_success_event = asyncio.Event()
+        preview_result: CheckoutPreview | None = None
+        blocked_sign_requests = 0
+
+        async def process_response(response) -> None:
+            nonlocal preview_result
+
+            try:
+                url = response.url
+            except Exception:
+                return
+
+            try:
+                payload = await response.json()
+            except Exception:
+                return
+
+            if url.endswith("/api/biz/pay/preview") or url.endswith("/api/biz/pay/comeback/preview"):
+                preview_result = _parse_checkout_preview(payload)
+                preview_event.set()
+                return
+
+            if "/api/biz/pay/check" in url and isinstance(payload, dict) and payload.get("data") == "SUCCESS":
+                pay_success_event.set()
+
+        def response_handler(response) -> None:
+            asyncio.create_task(process_response(response))
+
+        async def block_sign_route(route) -> None:
+            nonlocal blocked_sign_requests
+            blocked_sign_requests += 1
+            await route.abort()
+
+        await self._page.route("**/api/biz/pay/create-sign", block_sign_route)
+        await self._page.route("**/api/biz/pay/product/update/sign", block_sign_route)
+        self._page.on("response", response_handler)
+
+        try:
+            captcha_ok = await self.handle_captcha(timeout=timeout)
+            if not captcha_ok:
+                return CheckoutResult(False, "FAILED", "captcha-not-completed")
+
+            try:
+                await asyncio.wait_for(preview_event.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                return CheckoutResult(False, "FAILED", "preview-timeout")
+
+            if preview_result is None or not preview_result.ok:
+                return CheckoutResult(False, "FAILED", "preview-failed", preview=preview_result)
+            if preview_result.sold_out is True:
+                return CheckoutResult(False, "FAILED", "sold-out", preview=preview_result)
+            if preview_result.third_party_amount is None:
+                return CheckoutResult(False, "FAILED", "preview-missing-third-party-amount", preview=preview_result)
+            if preview_result.third_party_amount > 0:
+                return CheckoutResult(False, "FAILED", "insufficient-balance", preview=preview_result)
+
+            try:
+                await asyncio.wait_for(pay_success_event.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                if blocked_sign_requests > 0:
+                    return CheckoutResult(False, "FAILED", "balance-only-flow-not-supported", preview=preview_result)
+                return CheckoutResult(False, "FAILED", "pay-check-timeout", preview=preview_result)
+
+            return CheckoutResult(True, "COMPLETED", preview=preview_result)
+        finally:
+            await self._page.unroute("**/api/biz/pay/create-sign", block_sign_route)
+            await self._page.unroute("**/api/biz/pay/product/update/sign", block_sign_route)
+            remove_listener = getattr(self._page, "remove_listener", None)
+            if callable(remove_listener):
+                remove_listener("response", response_handler)
 
     async def wait_for_captcha(self, timeout: float = 5.0) -> bool:
         """等待滑块验证码出现"""

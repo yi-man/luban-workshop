@@ -12,7 +12,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools.glm_coding_bot.config import Config
-from tools.glm_coding_bot.core.browser_controller import BrowserController, PageState
+from tools.glm_coding_bot.core.browser_controller import (
+    BrowserController,
+    CheckoutPreview,
+    PageState,
+    _parse_checkout_preview,
+)
 
 
 @pytest.fixture
@@ -57,6 +62,7 @@ class TestBrowserController:
         assert controller._context is mock_context
         assert controller._page is mock_page
         mock_pw.chromium.launch_persistent_context.assert_awaited_once()
+        assert mock_pw.chromium.launch_persistent_context.await_args.kwargs["channel"] == "chrome"
 
     @pytest.mark.asyncio
     async def test_init_failure(self, controller):
@@ -315,6 +321,78 @@ async def test_attempt_recover_fails_when_page_is_still_not_ready(controller):
 
     assert recovered is False
     controller.refresh_page_state.assert_awaited_once_with("Max", "quarterly")
+
+
+@pytest.mark.asyncio
+async def test_reload_purchase_page_refreshes_and_reselects_period(controller):
+    controller._page = AsyncMock()
+    controller._initialized = True
+    controller._select_period_tab = AsyncMock(return_value=True)
+
+    refreshed = await controller.reload_purchase_page("quarterly")
+
+    assert refreshed is True
+    controller._page.reload.assert_awaited_once()
+    controller._select_period_tab.assert_awaited_once_with("quarterly")
+
+
+def test_parse_checkout_preview_reads_balance_fields():
+    preview = _parse_checkout_preview(
+        {
+            "code": 200,
+            "data": {
+                "bizId": "biz-123",
+                "soldOut": False,
+                "cashAmount": "30.00",
+                "giveAmount": "10.00",
+                "thirdPartyAmount": "0.00",
+            },
+        }
+    )
+
+    assert preview == CheckoutPreview(
+        ok=True,
+        sold_out=False,
+        biz_id="biz-123",
+        cash_amount=30.0,
+        give_amount=10.0,
+        third_party_amount=0.0,
+    )
+
+
+def test_parse_checkout_preview_marks_non_200_as_invalid():
+    preview = _parse_checkout_preview({"code": 500, "msg": "请完成安全验证", "data": None})
+
+    assert preview.ok is False
+    assert preview.sold_out is None
+    assert preview.third_party_amount is None
+
+
+@pytest.mark.asyncio
+async def test_get_auth_token_reads_persistent_cookie_first(controller):
+    controller._context = AsyncMock()
+    controller._context.cookies = AsyncMock(return_value=[
+        {"name": "bigmodel_token_production", "value": "cookie-token"},
+    ])
+    controller._page = AsyncMock()
+
+    token = await controller.get_auth_token()
+
+    assert token == "cookie-token"
+    controller._page.evaluate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_auth_token_falls_back_to_page_cookie(controller):
+    controller._context = AsyncMock()
+    controller._context.cookies = AsyncMock(return_value=[])
+    controller._page = AsyncMock()
+    controller._page.evaluate = AsyncMock(return_value="page-token")
+
+    token = await controller.get_auth_token()
+
+    assert token == "page-token"
+    controller._page.evaluate.assert_awaited_once()
 
 
 if __name__ == "__main__":

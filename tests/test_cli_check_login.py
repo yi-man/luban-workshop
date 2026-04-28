@@ -1,6 +1,8 @@
 """Tests for login session verification behavior."""
 
 import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from click.testing import CliRunner
 import pytest
@@ -130,3 +132,41 @@ async def test_buy_verification_error_is_not_reported_as_logged_out(tmp_path, mo
     output = "\n".join(messages)
     assert "登录状态校验失败" in output
     assert "登录状态无效，请先运行" not in output
+
+
+@pytest.mark.asyncio
+async def test_verify_login_session_uses_chrome_channel(tmp_path, monkeypatch):
+    user_data_dir = tmp_path / ".glm-coding-bot"
+    user_data_dir.mkdir()
+
+    mock_context = AsyncMock()
+    mock_context.pages = []
+    mock_page = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_context.close = AsyncMock(return_value=None)
+
+    mock_browser = AsyncMock()
+    mock_browser.chromium.launch_persistent_context = AsyncMock(return_value=mock_context)
+
+    mock_async_playwright = AsyncMock()
+    mock_async_playwright.__aenter__.return_value = mock_browser
+    mock_async_playwright.__aexit__.return_value = False
+
+    monkeypatch.setattr(
+        cli_module,
+        "async_playwright",
+        lambda: mock_async_playwright,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_inspect_login_session",
+        AsyncMock(return_value=cli_module.SessionCheckResult.valid("ok")),
+        raising=False,
+    )
+
+    result = await cli_module._verify_login_session(user_data_dir)
+
+    assert result.status == "valid"
+    mock_browser.chromium.launch_persistent_context.assert_awaited_once()
+    assert mock_browser.chromium.launch_persistent_context.await_args.kwargs["channel"] == "chrome"

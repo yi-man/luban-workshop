@@ -12,6 +12,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from tools.glm_coding_bot.core.stock_monitor import StockInfo, StockMonitor, StockSignalMonitor
 
 
+def _make_batch_preview_payload(*products):
+    return {
+        "code": 200,
+        "data": {
+            "productList": list(products),
+        },
+    }
+
+
 def _make_mock_response(status=200, json_data=None):
     """Create a mock aiohttp response that supports async context manager."""
     mock_resp = AsyncMock()
@@ -28,8 +37,8 @@ def _make_mock_session(responses=None):
     if responses is None:
         responses = [_make_mock_response()]
 
-    mock_session.get = MagicMock()
-    mock_session.get.return_value = responses[0] if len(responses) == 1 else responses
+    mock_session.post = MagicMock()
+    mock_session.post.return_value = responses[0] if len(responses) == 1 else responses
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
     return mock_session
@@ -42,9 +51,9 @@ def stock_monitor():
 
 @pytest.mark.asyncio
 async def test_check_once_without_business_signal_is_not_available(stock_monitor):
-    mock_resp = _make_mock_response(status=200, json_data={"code": 200, "data": {}})
+    mock_resp = _make_mock_response(status=200, json_data=_make_batch_preview_payload())
     mock_session = MagicMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.post = MagicMock(return_value=mock_resp)
 
     result = await stock_monitor.check_stock_once(session=mock_session)
 
@@ -52,34 +61,43 @@ async def test_check_once_without_business_signal_is_not_available(stock_monitor
 
 
 @pytest.mark.asyncio
-async def test_check_once_with_positive_magnitude_is_available(stock_monitor):
+async def test_check_once_with_available_product_is_available(stock_monitor):
     mock_resp = _make_mock_response(
         status=200,
-        json_data={
-            "code": 200,
-            "data": {"magnitude": 100, "productId": "product-test-123"},
-        },
+        json_data=_make_batch_preview_payload(
+            {
+                "productId": "product-test-123",
+                "soldOut": False,
+                "canPurchase": True,
+                "forbidden": False,
+            }
+        ),
     )
     mock_session = MagicMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.post = MagicMock(return_value=mock_resp)
 
     result = await stock_monitor.check_stock_once(session=mock_session)
 
     assert result.available is True
-    assert result.raw_data["data"]["magnitude"] == 100
+    assert result.sold_out is False
+    assert result.can_purchase is True
 
 
 @pytest.mark.asyncio
 async def test_check_once_preserves_api_product_id(stock_monitor):
     mock_resp = _make_mock_response(
         status=200,
-        json_data={
-            "code": 200,
-            "data": {"magnitude": 100, "productId": "product-api-999"},
-        },
+        json_data=_make_batch_preview_payload(
+            {
+                "productId": "product-api-999",
+                "soldOut": False,
+                "canPurchase": True,
+                "forbidden": False,
+            }
+        ),
     )
     mock_session = MagicMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.post = MagicMock(return_value=mock_resp)
 
     result = await stock_monitor.check_stock_once(session=mock_session)
 
@@ -88,58 +106,69 @@ async def test_check_once_preserves_api_product_id(stock_monitor):
 
 
 @pytest.mark.asyncio
-async def test_check_once_with_positive_tokens_is_available(stock_monitor):
+async def test_check_once_with_sold_out_product_is_not_available(stock_monitor):
     mock_resp = _make_mock_response(
         status=200,
-        json_data={
-            "code": 200,
-            "data": {"tokens": 5, "productId": "product-test-123"},
-        },
+        json_data=_make_batch_preview_payload(
+            {
+                "productId": "product-test-123",
+                "soldOut": True,
+                "canPurchase": None,
+                "forbidden": False,
+            }
+        ),
     )
     mock_session = MagicMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
-
-    result = await stock_monitor.check_stock_once(session=mock_session)
-
-    assert result.available is True
-    assert result.tokens == 5
-
-
-@pytest.mark.asyncio
-async def test_check_once_with_positive_times_is_available(stock_monitor):
-    mock_resp = _make_mock_response(
-        status=200,
-        json_data={
-            "code": 200,
-            "data": {"times": 2, "productId": "product-test-123"},
-        },
-    )
-    mock_session = MagicMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
-
-    result = await stock_monitor.check_stock_once(session=mock_session)
-
-    assert result.available is True
-    assert result.times == 2
-
-
-@pytest.mark.asyncio
-async def test_check_once_with_boolean_business_signal_is_not_available(stock_monitor):
-    mock_resp = _make_mock_response(
-        status=200,
-        json_data={
-            "code": 200,
-            "data": {"tokens": True, "times": True, "magnitude": True},
-        },
-    )
-    mock_session = MagicMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.post = MagicMock(return_value=mock_resp)
 
     result = await stock_monitor.check_stock_once(session=mock_session)
 
     assert result.available is False
-    assert result.tokens is None
-    assert result.times is None
+    assert result.sold_out is True
+
+
+@pytest.mark.asyncio
+async def test_check_once_with_forbidden_product_is_not_available(stock_monitor):
+    mock_resp = _make_mock_response(
+        status=200,
+        json_data=_make_batch_preview_payload(
+            {
+                "productId": "product-test-123",
+                "soldOut": False,
+                "canPurchase": True,
+                "forbidden": True,
+            }
+        ),
+    )
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_resp)
+
+    result = await stock_monitor.check_stock_once(session=mock_session)
+
+    assert result.available is False
+    assert result.forbidden is True
+
+
+@pytest.mark.asyncio
+async def test_check_once_with_can_purchase_false_is_not_available(stock_monitor):
+    mock_resp = _make_mock_response(
+        status=200,
+        json_data=_make_batch_preview_payload(
+            {
+                "productId": "product-test-123",
+                "soldOut": False,
+                "canPurchase": False,
+                "forbidden": False,
+            }
+        ),
+    )
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_resp)
+
+    result = await stock_monitor.check_stock_once(session=mock_session)
+
+    assert result.available is False
+    assert result.can_purchase is False
 
 
 @pytest.mark.asyncio
@@ -197,20 +226,28 @@ async def test_signal_monitor_rejects_unconfirmed_hit(monkeypatch):
 @pytest.mark.asyncio
 async def test_signal_monitor_confirm_hit_reuses_shared_session():
     monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
-    first_payload = {
-        "code": 200,
-        "data": {"magnitude": 1, "productId": "product-test-123"},
-    }
-    second_payload = {
-        "code": 200,
-        "data": {"magnitude": 2, "productId": "product-test-123"},
-    }
+    first_payload = _make_batch_preview_payload(
+        {
+            "productId": "product-test-123",
+            "soldOut": False,
+            "canPurchase": True,
+            "forbidden": False,
+        }
+    )
+    second_payload = _make_batch_preview_payload(
+        {
+            "productId": "product-test-123",
+            "soldOut": False,
+            "canPurchase": True,
+            "forbidden": False,
+        }
+    )
     responses = [
         _make_mock_response(status=200, json_data=first_payload),
         _make_mock_response(status=200, json_data=second_payload),
     ]
     mock_session = MagicMock()
-    mock_session.get = MagicMock(side_effect=responses)
+    mock_session.post = MagicMock(side_effect=responses)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
     client_session_factory = MagicMock(return_value=mock_session)
@@ -221,7 +258,7 @@ async def test_signal_monitor_confirm_hit_reuses_shared_session():
             signal = await monitor.confirm_hit()
 
     assert client_session_factory.call_count == 1
-    assert mock_session.get.call_count == 2
+    assert mock_session.post.call_count == 2
     assert signal.raw_hit is True
     assert signal.confirmed is True
     assert signal.confidence == 2
@@ -235,20 +272,28 @@ async def test_signal_monitor_confirm_hit_reuses_shared_session():
 @pytest.mark.asyncio
 async def test_signal_monitor_confirm_hit_preserves_api_product_id():
     monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
-    first_payload = {
-        "code": 200,
-        "data": {"magnitude": 1, "productId": "product-api-999"},
-    }
-    second_payload = {
-        "code": 200,
-        "data": {"magnitude": 2, "productId": "product-api-999"},
-    }
+    first_payload = _make_batch_preview_payload(
+        {
+            "productId": "product-api-999",
+            "soldOut": False,
+            "canPurchase": True,
+            "forbidden": False,
+        }
+    )
+    second_payload = _make_batch_preview_payload(
+        {
+            "productId": "product-api-999",
+            "soldOut": False,
+            "canPurchase": True,
+            "forbidden": False,
+        }
+    )
     responses = [
         _make_mock_response(status=200, json_data=first_payload),
         _make_mock_response(status=200, json_data=second_payload),
     ]
     mock_session = MagicMock()
-    mock_session.get = MagicMock(side_effect=responses)
+    mock_session.post = MagicMock(side_effect=responses)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
     client_session_factory = MagicMock(return_value=mock_session)
@@ -266,20 +311,28 @@ async def test_signal_monitor_confirm_hit_preserves_api_product_id():
 @pytest.mark.asyncio
 async def test_signal_monitor_does_not_confirm_when_product_id_changes_between_hits():
     monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
-    first_payload = {
-        "code": 200,
-        "data": {"magnitude": 1, "productId": "product-api-111"},
-    }
-    second_payload = {
-        "code": 200,
-        "data": {"magnitude": 2, "productId": "product-api-222"},
-    }
+    first_payload = _make_batch_preview_payload(
+        {
+            "productId": "product-api-111",
+            "soldOut": False,
+            "canPurchase": True,
+            "forbidden": False,
+        }
+    )
+    second_payload = _make_batch_preview_payload(
+        {
+            "productId": "product-api-222",
+            "soldOut": False,
+            "canPurchase": True,
+            "forbidden": False,
+        }
+    )
     responses = [
         _make_mock_response(status=200, json_data=first_payload),
         _make_mock_response(status=200, json_data=second_payload),
     ]
     mock_session = MagicMock()
-    mock_session.get = MagicMock(side_effect=responses)
+    mock_session.post = MagicMock(side_effect=responses)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
     client_session_factory = MagicMock(return_value=mock_session)
@@ -301,16 +354,24 @@ async def test_signal_monitor_does_not_confirm_when_product_id_changes_between_h
 @pytest.mark.asyncio
 async def test_signal_monitor_confirm_hit_uses_configured_external_session():
     monitor = StockSignalMonitor(product_id="product-test-123", poll_interval=0.02)
-    first_payload = {
-        "code": 200,
-        "data": {"magnitude": 1, "productId": "product-test-123"},
-    }
-    second_payload = {
-        "code": 200,
-        "data": {"magnitude": 2, "productId": "product-test-123"},
-    }
+    first_payload = _make_batch_preview_payload(
+        {
+            "productId": "product-test-123",
+            "soldOut": False,
+            "canPurchase": True,
+            "forbidden": False,
+        }
+    )
+    second_payload = _make_batch_preview_payload(
+        {
+            "productId": "product-test-123",
+            "soldOut": False,
+            "canPurchase": True,
+            "forbidden": False,
+        }
+    )
     external_session = MagicMock()
-    external_session.get = MagicMock(side_effect=[
+    external_session.post = MagicMock(side_effect=[
         _make_mock_response(status=200, json_data=first_payload),
         _make_mock_response(status=200, json_data=second_payload),
     ])
@@ -328,7 +389,7 @@ async def test_signal_monitor_confirm_hit_uses_configured_external_session():
 
     assert monitor.monitor.session is external_session
     assert client_session_factory.call_count == 0
-    assert external_session.get.call_count == 2
+    assert external_session.post.call_count == 2
     assert signal.raw_hit is True
     assert signal.confirmed is True
     assert signal.confidence == 2
@@ -370,10 +431,19 @@ class TestStockMonitor:
     async def test_check_once_with_stock(self, stock_monitor):
         mock_resp = _make_mock_response(status=200, json_data={
             "code": 200,
-            "data": {"magnitude": 100, "productId": "product-test-123"},
+            "data": {
+                "productList": [
+                    {
+                        "productId": "product-test-123",
+                        "soldOut": False,
+                        "canPurchase": True,
+                        "forbidden": False,
+                    }
+                ]
+            },
         })
         mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
+        mock_session.post = MagicMock(return_value=mock_resp)
 
         result = await stock_monitor.check_stock_once(session=mock_session)
 
@@ -383,7 +453,7 @@ class TestStockMonitor:
     async def test_check_once_without_stock(self, stock_monitor):
         mock_resp = _make_mock_response(status=200, json_data={"code": 200, "data": None})
         mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
+        mock_session.post = MagicMock(return_value=mock_resp)
 
         result = await stock_monitor.check_stock_once(session=mock_session)
 
@@ -393,7 +463,7 @@ class TestStockMonitor:
     async def test_check_once_api_error(self, stock_monitor):
         mock_resp = _make_mock_response(status=500)
         mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
+        mock_session.post = MagicMock(return_value=mock_resp)
 
         result = await stock_monitor.check_stock_once(session=mock_session)
 
@@ -402,7 +472,7 @@ class TestStockMonitor:
     @pytest.mark.asyncio
     async def test_check_once_timeout(self, stock_monitor):
         mock_session = MagicMock()
-        mock_session.get = MagicMock(side_effect=asyncio.TimeoutError())
+        mock_session.post = MagicMock(side_effect=asyncio.TimeoutError())
 
         result = await stock_monitor.check_stock_once(session=mock_session)
 
@@ -418,10 +488,19 @@ class TestStockMonitor:
     async def test_wait_for_stock_success(self, stock_monitor):
         mock_resp = _make_mock_response(status=200, json_data={
             "code": 200,
-            "data": {"magnitude": 100, "productId": "product-test-123"},
+            "data": {
+                "productList": [
+                    {
+                        "productId": "product-test-123",
+                        "soldOut": False,
+                        "canPurchase": True,
+                        "forbidden": False,
+                    }
+                ]
+            },
         })
         mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
+        mock_session.post = MagicMock(return_value=mock_resp)
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -433,7 +512,7 @@ class TestStockMonitor:
     async def test_wait_for_stock_timeout(self, stock_monitor):
         mock_resp = _make_mock_response(status=200, json_data={"code": 200, "data": None})
         mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
+        mock_session.post = MagicMock(return_value=mock_resp)
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 

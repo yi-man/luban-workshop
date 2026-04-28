@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 import click
+from playwright.async_api import async_playwright
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
@@ -25,7 +26,7 @@ from rich.status import Status
 from tools.glm_coding_bot.config import get_config
 from tools.glm_coding_bot.core.browser_controller import BrowserController
 from tools.glm_coding_bot.core.purchase_coordinator import PurchaseCoordinator
-from tools.glm_coding_bot.core.stock_monitor import StockMonitor, StockSignalMonitor
+from tools.glm_coding_bot.core.stock_monitor import StockInfo, StockSignalMonitor
 from tools.glm_coding_bot.product_mapping import (
     SubscriptionPeriod,
     get_product_id,
@@ -91,6 +92,13 @@ class SessionCheckResult:
         return cls("error", detail)
 
 
+@dataclass(frozen=True)
+class BuySchedule:
+    target_at: datetime
+    prewarm_at: datetime
+    commit_at: datetime
+
+
 # ============== 验证函数 ==============
 
 def validate_time(time_str: str) -> bool:
@@ -120,6 +128,25 @@ def validate_package_period(package: str, period: str) -> bool:
         return False
 
 
+def _compute_buy_schedule(
+    *,
+    now_dt: datetime,
+    target_time: str,
+    ntp_offset_ms: float,
+    prewarm_seconds: float,
+    commit_lead_seconds: float,
+) -> BuySchedule:
+    current_time = now_dt + timedelta(milliseconds=ntp_offset_ms)
+    target = datetime.strptime(target_time, "%H:%M:%S")
+    target_at = current_time.replace(hour=target.hour, minute=target.minute, second=target.second, microsecond=0)
+    if target_at < current_time:
+        target_at = target_at + timedelta(days=1)
+
+    prewarm_at = target_at - timedelta(seconds=prewarm_seconds)
+    commit_at = target_at - timedelta(seconds=commit_lead_seconds)
+    return BuySchedule(target_at=target_at, prewarm_at=prewarm_at, commit_at=commit_at)
+
+
 # ============== CLI命令 ==============
 
 @click.group()
@@ -144,13 +171,12 @@ def login():
     ))
 
     async def do_login():
-        from playwright.async_api import async_playwright
-
         console.print("[blue]正在启动浏览器（有头模式）...[/blue]")
 
         async with async_playwright() as p:
             context = await p.chromium.launch_persistent_context(
                 str(user_data_dir),
+                channel=config.browser_channel,
                 headless=False,
                 viewport={"width": 1280, "height": 900},
                 args=[
@@ -296,13 +322,13 @@ async def _inspect_login_session(page, context) -> SessionCheckResult:
 
 async def _verify_login_session(user_data_dir: Path) -> SessionCheckResult:
     """通过实际打开页面验证会话是否仍有效。"""
-    from playwright.async_api import async_playwright
-
     context = None
+    config = get_config()
     try:
         async with async_playwright() as p:
             context = await p.chromium.launch_persistent_context(
                 str(user_data_dir),
+                channel=config.browser_channel,
                 headless=True,
                 viewport={"width": 1280, "height": 900},
                 args=["--disable-blink-features=AutomationControlled"],
@@ -329,7 +355,8 @@ async def _verify_login_session(user_data_dir: Path) -> SessionCheckResult:
 @click.option("--time", "target_time", default="10:00:00", help="目标时间 (HH:MM:SS)")
 @click.option("--headless", is_flag=True, help="无头模式")
 @click.option("--now", is_flag=True, help="立即执行（不等待目标时间）")
-def buy(package: str, period: str, target_time: str, headless: bool, now: bool):
+@click.option("--dry-run", is_flag=True, help="只验证页面预热与就绪状态，不轮询库存、不点击购买")
+def buy(package: str, period: str, target_time: str, headless: bool, now: bool, dry_run: bool):
     """执行抢购"""
     if not validate_time(target_time):
         console.print("[red]时间格式不正确，请使用 HH:MM:SS 格式[/red]")
@@ -339,15 +366,66 @@ def buy(package: str, period: str, target_time: str, headless: bool, now: bool):
         console.print(f"[red]无效的套餐组合: {package} - {period}[/red]")
         return
 
-    asyncio.run(_buy(package, period, target_time, headless, now))
+    asyncio.run(_buy(package, period, target_time, headless, now, dry_run))
 
 
-async def _buy(package: str, period: str, target_time: str, headless: bool, now: bool):
+def _print_page_probe(package: str, period: str, state) -> None:
+    console.print("\n" + "=" * 60)
+    console.print("[bold cyan]阶段2: Dry Run 页面探针[/bold cyan]")
+    console.print("=" * 60)
+    console.print(f"[dim]package={package} period={period}[/dim]")
+    console.print(
+        "[dim]"
+        f"current_url={state.current_url} "
+        f"session_ok={state.session_ok} "
+        f"route_ok={state.route_ok} "
+        f"period_ok={state.period_ok} "
+        f"button_present={state.button_present} "
+        f"button_clickable={state.button_clickable} "
+        f"viewport_ok={state.viewport_ok} "
+        f"captcha_blocking={state.captcha_blocking} "
+        f"warm_ready={state.warm_ready} "
+        f"hot_ready={state.hot_ready} "
+        f"last_failure_reason={state.last_failure_reason}"
+        "[/dim]"
+    )
+    if state.hot_ready:
+        console.print("[green]Dry Run 结果: 页面已达到可提交状态，但本次不会点击购买[/green]")
+    else:
+        console.print("[yellow]Dry Run 结果: 页面尚未达到可提交状态，本次不会点击购买[/yellow]")
+
+
+def _page_state_to_stock_info(product_id: str, state) -> StockInfo:
+    available = all(
+        [
+            state.session_ok,
+            state.route_ok,
+            state.period_ok,
+            state.button_present,
+            state.button_clickable,
+            not state.captcha_blocking,
+        ]
+    )
+    return StockInfo(
+        product_id=product_id,
+        available=available,
+        raw_data={
+            "current_url": state.current_url,
+            "button_present": state.button_present,
+            "button_clickable": state.button_clickable,
+            "warm_ready": state.warm_ready,
+            "hot_ready": state.hot_ready,
+            "last_failure_reason": state.last_failure_reason,
+        },
+    )
+
+
+async def _buy(package: str, period: str, target_time: str, headless: bool, now: bool, dry_run: bool = False):
     """抢购实现"""
     console.print(Panel.fit(
         f"[bold cyan]GLM Coding Bot - 抢购[/bold cyan]\n"
         f"[dim]套餐: {package} | 周期: {period} | 目标时间: {target_time}[/dim]\n"
-        f"[dim]模式: {'立即执行' if now else '定时等待'} | 浏览器: {'无头' if headless else '可视'}[/dim]",
+        f"[dim]模式: {'立即执行' if now else '定时等待'}{' + dry-run' if dry_run else ''} | 浏览器: {'无头' if headless else '可视'}[/dim]",
         border_style="cyan",
     ))
 
@@ -398,19 +476,20 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
     console.print(f"[green]目标产品: {product_id}[/green]")
 
     if not now:
-        # 使用 NTP 偏移修正当前时间，减少本机时钟误差造成的抢购偏移
-        now_dt = datetime.now() + timedelta(milliseconds=ntp_offset_ms)
-        target = datetime.strptime(target_time, "%H:%M:%S")
-        target = now_dt.replace(hour=target.hour, minute=target.minute, second=target.second)
+        schedule = _compute_buy_schedule(
+            now_dt=datetime.now(),
+            target_time=target_time,
+            ntp_offset_ms=ntp_offset_ms,
+            prewarm_seconds=config.prewarm_seconds,
+            commit_lead_seconds=config.commit_lead_seconds,
+        )
+        current_time = datetime.now() + timedelta(milliseconds=ntp_offset_ms)
 
-        if target < now_dt:
-            target = target + timedelta(days=1)
-            console.print(f"[blue]目标时间是明天 {target.strftime('%Y-%m-%d %H:%M:%S')}[/blue]")
+        if schedule.target_at.date() > current_time.date():
+            console.print(f"[blue]目标时间是明天 {schedule.target_at.strftime('%Y-%m-%d %H:%M:%S')}[/blue]")
 
-        start_time = target - timedelta(seconds=10)
-
-        if start_time > now_dt:
-            wait_seconds = (start_time - now_dt).total_seconds()
+        if schedule.prewarm_at > current_time:
+            wait_seconds = (schedule.prewarm_at - current_time).total_seconds()
             hours = int(wait_seconds // 3600)
             minutes = int((wait_seconds % 3600) // 60)
             seconds = int(wait_seconds % 60)
@@ -422,13 +501,12 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
                 parts.append(f"{minutes}分钟")
             parts.append(f"{seconds}秒")
 
-            console.print(f"[blue]等待到 {start_time.strftime('%H:%M:%S')} (还有 {''.join(parts)})[/blue]")
+            console.print(f"[blue]等待到 {schedule.prewarm_at.strftime('%H:%M:%S')} (还有 {''.join(parts)})[/blue]")
             await asyncio.sleep(wait_seconds)
         else:
-            console.print("[yellow]目标时间已过，立即开始[/yellow]")
+            console.print("[yellow]已进入预热窗口，立即开始打开页面[/yellow]")
 
     bot = BrowserController(headless=headless)
-    keep_browser_open = False
 
     try:
         console.print("\n" + "=" * 60)
@@ -440,11 +518,43 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
             console.print("[red]浏览器预热失败，抢购结束[/red]")
             return
 
+        if dry_run:
+            page_state = await bot.refresh_page_state(package, period)
+            _print_page_probe(package, period, page_state)
+            return
+
+        if not now:
+            current_time = datetime.now() + timedelta(milliseconds=ntp_offset_ms)
+            schedule = _compute_buy_schedule(
+                now_dt=datetime.now(),
+                target_time=target_time,
+                ntp_offset_ms=ntp_offset_ms,
+                prewarm_seconds=config.prewarm_seconds,
+                commit_lead_seconds=config.commit_lead_seconds,
+            )
+            if schedule.commit_at > current_time:
+                wait_seconds = (schedule.commit_at - current_time).total_seconds()
+                console.print(f"[blue]页面已预热，等待到 {schedule.commit_at.strftime('%H:%M:%S')} 进入抢购窗口[/blue]")
+                await asyncio.sleep(wait_seconds)
+
         console.print("\n" + "=" * 60)
         console.print("[bold cyan]阶段2: 协调库存与提交流程[/bold cyan]")
         console.print("=" * 60)
 
-        signal_monitor = StockSignalMonitor(product_id=product_id, poll_interval=0.02)
+        last_reload_at = time.monotonic()
+        hot_poll_count = 0
+
+        async def check_browser_stock() -> StockInfo:
+            nonlocal last_reload_at, hot_poll_count
+            hot_poll_count += 1
+            now_monotonic = time.monotonic()
+            if now_monotonic - last_reload_at >= 1.0:
+                await bot.reload_purchase_page(period)
+                last_reload_at = now_monotonic
+            page_state = await bot.refresh_page_state(package, period)
+            return _page_state_to_stock_info(product_id, page_state)
+
+        signal_monitor = StockSignalMonitor(product_id=product_id, poll_interval=0.02, checker=check_browser_stock)
         coordinator = PurchaseCoordinator(
             package=package,
             period=period,
@@ -457,16 +567,18 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
             console.print(f"[red]抢购失败: {result.failure_reason}[/red]")
             return
 
-        keep_browser_open = True
-        console.print("[green]购买点击已提交，进入验证码阶段[/green]")
-        success = await bot.handle_captcha(timeout=15.0)
-
-        if success:
+        console.print("[green]购买点击已提交，进入余额结算判定阶段[/green]")
+        checkout_result = await bot.complete_balance_only_checkout(timeout=15.0)
+        if checkout_result.success:
             console.print("\n" + "=" * 60)
-            console.print("[green bold]抢购成功！请尽快完成支付[/green bold]")
+            console.print("[green bold]抢购成功！已按仅余额模式完成结算[/green bold]")
             console.print("=" * 60)
+        elif checkout_result.failure_reason == "insufficient-balance":
+            console.print("[red]余额不足，当前订单仍需第三方支付；该链路已暂时禁用[/red]")
+        elif checkout_result.failure_reason == "balance-only-flow-not-supported":
+            console.print("[yellow]当前站点仍尝试跳转第三方支付，纯余额自动结算链路暂未确认[/yellow]")
         else:
-            console.print("\n[yellow]验证未完成，请手动检查浏览器[/yellow]")
+            console.print(f"[red]余额结算失败: {checkout_result.failure_reason}[/red]")
 
     except Exception as e:
         console.print(f"[red]浏览器操作失败: {e}[/red]")
@@ -478,10 +590,6 @@ async def _buy(package: str, period: str, target_time: str, headless: bool, now:
         console.print(f"[dim]  导航: {stats['navigation_count']}次[/dim]")
         console.print(f"[dim]  点击: {stats['click_count']}次[/dim]")
         console.print(f"[dim]  错误: {stats['error_count']}次[/dim]")
-
-        if keep_browser_open:
-            console.print("\n[dim]10秒后关闭浏览器...[/dim]")
-            await asyncio.sleep(10)
         await bot.close()
 
 
@@ -517,14 +625,50 @@ async def _monitor(package: str, period: str, duration: int):
         console.print(f"[red]未找到产品ID: {package} - {period}[/red]")
         return
 
-    monitor = StockMonitor(product_id=product_id, poll_interval=0.02)
+    config = get_config()
+    if not config.user_data_dir.exists():
+        console.print("[red]未登录，请先运行:[/red]")
+        console.print("[dim]  glm-coding-bot login[/dim]")
+        return
 
-    found = await monitor.wait_for_stock(timeout=float(duration))
+    cookie_files = list(config.user_data_dir.glob("Default/Cookies")) + list(config.user_data_dir.glob("Profile*/Cookies"))
+    if not cookie_files:
+        console.print("[red]登录状态无效，请先运行:[/red]")
+        console.print("[dim]  glm-coding-bot login[/dim]")
+        return
 
-    if found:
-        console.print("\n[green bold]检测到库存！[/green bold]")
-    else:
-        console.print("\n[yellow]监控结束，未检测到库存[/yellow]")
+    with Status("[blue]检查登录状态...", console=console):
+        session_result = await _verify_login_session(config.user_data_dir)
+    if session_result.status == "error":
+        console.print("[red]登录状态校验失败，请稍后重试[/red]")
+        console.print(f"[dim]  {session_result.detail}[/dim]")
+        return
+    if session_result.status != "valid":
+        console.print("[red]登录状态无效，请先运行:[/red]")
+        console.print("[dim]  glm-coding-bot login[/dim]")
+        return
+
+    bot = BrowserController(headless=True)
+    try:
+        if not await bot.init():
+            console.print("[red]浏览器初始化失败，无法执行库存监控[/red]")
+            return
+        if not await bot.navigate_to_purchase():
+            console.print("[red]页面预热失败，无法执行库存监控[/red]")
+            return
+        async def check_browser_stock() -> StockInfo:
+            page_state = await bot.refresh_page_state(package, period)
+            return _page_state_to_stock_info(product_id, page_state)
+
+        signal_monitor = StockSignalMonitor(product_id=product_id, poll_interval=0.02, checker=check_browser_stock)
+        signal = await signal_monitor.wait_for_confirmed_hit(timeout=float(duration))
+
+        if signal.confirmed:
+            console.print("\n[green bold]检测到库存！[/green bold]")
+        else:
+            console.print("\n[yellow]监控结束，未检测到库存[/yellow]")
+    finally:
+        await bot.close()
 
 
 @cli.command("test")

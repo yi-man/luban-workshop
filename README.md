@@ -127,30 +127,29 @@ uv run remove_watermark <input_image>
 
 ### glm-coding-bot
 
-GLM Coding Plan 抢购工具 — API 高频轮询检测库存 + 浏览器自动化购买 + 滑块验证码识别。
-
-**安装浏览器（首次使用）：**
-
-```bash
-playwright install chromium
-```
+GLM Coding Plan 抢购工具 — 固定浏览器 profile + 提前预热页面 + 浏览器自动化点击 + 仅余额结算判定。
 
 **使用：**
 
 ```bash
 # 1. 登录（首次使用）
-uv run glm-coding-bot login --phone 13800138000
+uv run glm-coding-bot login
 
-# 2. 抢购
+# 2. 检查登录态
+uv run glm-coding-bot check-login
+
+# 3. 抢购
+# 推荐在目标时间前约 11 分钟启动，命令会自动提前预热页面
 uv run glm-coding-bot buy                                    # 默认 Max 套餐 / 包季 / 10:00:00
 uv run glm-coding-bot buy --package Pro --period monthly     # 自定义套餐和周期
-uv run glm-coding-bot buy --now                              # 立即执行
+uv run glm-coding-bot buy --now                              # 立即执行（调试用）
+uv run glm-coding-bot buy --dry-run                          # 预热探针，不点击购买
 uv run glm-coding-bot buy --headless                         # 无头模式
 
-# 3. 仅监控库存
+# 4. 仅监控库存
 uv run glm-coding-bot monitor --duration 120
 
-# 4. 功能测试
+# 5. 功能测试
 uv run glm-coding-bot test
 ```
 
@@ -160,7 +159,8 @@ uv run glm-coding-bot test
 | `--period` | 订阅周期 | `monthly`, `quarterly`, `yearly` |
 | `--time` | 抢购时间 | `HH:MM:SS` |
 | `--headless` | 无头模式 | flag |
-| `--now` | 立即执行 | flag |
+| `--now` | 立即执行；跳过定时预热窗口 | flag |
+| `--dry-run` | 只验证页面预热与就绪状态，不执行购买点击 | flag |
 
 **Detailed documentation:** See [tools/glm_coding_bot/README.md](tools/glm_coding_bot/README.md)
 
